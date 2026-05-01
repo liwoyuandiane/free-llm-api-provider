@@ -434,6 +434,52 @@ function getApiProviders() {
     .map(([key, _]) => key);
 }
 
+// Parse context window string to number of tokens
+function parseCtxWindow(ctxStr) {
+  if (!ctxStr) return 128000;
+  const num = parseFloat(ctxStr);
+  if (isNaN(num)) return 128000;
+  if (ctxStr.includes('M')) return Math.round(num * 1000000);
+  if (ctxStr.includes('k')) return Math.round(num * 1000);
+  return num;
+}
+
+// Helper: Get model limits (context window, max output)
+function getModelLimits(modelId) {
+  const model = MODELS.find(m => m[0] === modelId);
+  if (!model) return { context: 128000, output: 8192 };
+  
+  const context = parseCtxWindow(model[4]);
+  
+  // Max output tokens by provider/model type
+  let output = 8192;
+  const provider = model[5];
+  
+  // Provider-specific max output
+  if (provider === 'groq') output = 8192;
+  else if (provider === 'nvidia') output = 8192;
+  else if (provider === 'cerebras') output = 8192;
+  else if (provider === 'openrouter') output = 32000;
+  else if (provider === 'googleai') output = 8192;
+  else if (provider === 'cloudflare') output = 4096;
+  else if (provider === 'sambanova') output = 4096;
+  else if (provider === 'together') output = 4096;
+  else if (provider === 'fireworks') output = 16384;
+  else if (provider === 'deepinfra') output = 4096;
+  else if (provider === 'hyperbolic') output = 8192;
+  else if (provider === 'scaleway') output = 4096;
+  else if (provider === 'siliconflow') output = 4096;
+  else if (provider === 'replicate') output = 4096;
+  else if (provider === 'huggingface') output = 4096;
+  else if (provider === 'perplexity') output = 4096;
+  else if (provider === 'zai') output = 8192;
+  else if (provider === 'codestral') output = 8192;
+  else if (provider === 'qwen') output = 8192;
+  else if (provider === 'ovhcloud') output = 4096;
+  
+  return { context, output };
+}
+
 module.exports = {
   sources,
   MODELS,
@@ -443,4 +489,6 @@ module.exports = {
   getModelsByProvider,
   getProviderForModel,
   getApiProviders,
+  getModelLimits,
+  parseCtxWindow,
 };

@@ -1,101 +1,166 @@
 /**
- * Health Checker
+ * Health Checker - Real-time provider health monitoring
  * 
- * Periodically pings all configured providers to check latency and availability.
- * Stores health scores that the proxy uses for routing decisions.
+ * Replicated from free-coding-models ping.js + analysis.js
+ * Periodically pings all configured providers with actual chat completion requests.
+ * Extracts quota from rate limit headers. Stores health scores for routing.
  */
 
-const https = require('https');
-const http = require('http');
-const url = require('url');
 const { getAllApiKeys } = require('./config');
 const { sources, ENV_VAR_NAMES } = require('./models');
 
-// Health check interval (ms)
-const HEALTH_CHECK_INTERVAL = 30000; // 30 seconds
-const HEALTH_CHECK_TIMEOUT = 10000;  // 10 seconds per provider
+// Constants
+const PING_TIMEOUT = 15000;
+const HEALTH_CHECK_INTERVAL = 30000;
 
-// Health state per provider
-const healthState = new Map(); // providerKey -> { latency, status, lastCheck, failures, score }
+// Health state per provider-key combo
+const healthState = new Map(); // providerKey -> { keys: [{key, latency, status, quota, lastCheck, pings, score}], bestModel }
 
 function getHealthState() {
   const state = {};
   for (const [key, value] of healthState.entries()) {
-    state[key] = { ...value };
+    state[key] = {
+      keys: value.keys.map(k => ({...k})),
+      bestModel: value.bestModel,
+      overallScore: value.overallScore,
+      overallStatus: value.overallStatus,
+    };
   }
   return state;
 }
 
-/**
- * Ping a single provider
- */
-function pingProvider(providerKey, apiKey) {
-  return new Promise((resolve) => {
-    const provider = sources[providerKey];
-    if (!provider || !provider.url) {
-      resolve({ provider: providerKey, status: 'no_endpoint', latency: -1 });
-      return;
-    }
-
-    const targetUrl = provider.url;
-    const parsedUrl = url.parse(targetUrl);
-    const isHttps = parsedUrl.protocol === 'https:';
-    const client = isHttps ? https : http;
-
-    const startTime = Date.now();
-    
-    // Build a small health check request
-    // Try to hit the models endpoint or just do a HEAD request
-    const options = {
-      hostname: parsedUrl.hostname,
-      port: parsedUrl.port || (isHttps ? 443 : 80),
-      path: parsedUrl.path.replace('/chat/completions', '/models'),
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      timeout: HEALTH_CHECK_TIMEOUT,
-    };
-
-    // If models endpoint fails, try a minimal POST to chat completions
-    const req = client.request(options, (res) => {
-      const latency = Date.now() - startTime;
-      
-      if (res.statusCode === 200 || res.statusCode === 401) {
-        // 200 = working, 401 = working but key issue (still alive)
-        resolve({ 
-          provider: providerKey, 
-          status: res.statusCode === 200 ? 'healthy' : 'auth_error',
-          latency,
-          apiKey: apiKey.substring(0, 8) + '...'
-        });
-      } else if (res.statusCode === 429) {
-        resolve({ provider: providerKey, status: 'rate_limited', latency, apiKey: apiKey.substring(0, 8) + '...' });
-      } else {
-        resolve({ provider: providerKey, status: 'error', latency, code: res.statusCode, apiKey: apiKey.substring(0, 8) + '...' });
-      }
-      
-      res.resume(); // Consume response
-    });
-
-    req.on('error', () => {
-      resolve({ provider: providerKey, status: 'offline', latency: -1, apiKey: apiKey.substring(0, 8) + '...' });
-    });
-
-    req.on('timeout', () => {
-      req.destroy();
-      resolve({ provider: providerKey, status: 'timeout', latency: HEALTH_CHECK_TIMEOUT, apiKey: apiKey.substring(0, 8) + '...' });
-    });
-
-    req.end();
-  });
+function resolveCloudflareUrl(url) {
+  const accountId = (process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+  if (!url.includes('{account_id}')) return url;
+  if (!accountId) return url.replace('{account_id}', 'missing-account-id');
+  return url.replace('{account_id}', encodeURIComponent(accountId));
 }
 
-/**
- * Run health check for all configured providers
- */
+function buildPingRequest(apiKey, modelId, providerKey, url) {
+  const apiModelId = providerKey === 'zai' ? modelId.replace(/^zai\//, '') : modelId;
+
+  if (providerKey === 'replicate') {
+    const replicateHeaders = { 'Content-Type': 'application/json', Prefer: 'wait=4' };
+    if (apiKey) replicateHeaders.Authorization = `Token ${apiKey}`;
+    return {
+      url,
+      headers: replicateHeaders,
+      body: { version: modelId, input: { prompt: 'hi' } },
+    };
+  }
+
+  if (providerKey === 'cloudflare') {
+    const headers = { 'Content-Type': 'application/json' };
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+    return {
+      url: resolveCloudflareUrl(url),
+      headers,
+      body: { model: apiModelId, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 },
+    };
+  }
+
+  const headers = { 'Content-Type': 'application/json' };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  if (providerKey === 'openrouter') {
+    headers['HTTP-Referer'] = 'https://github.com/alexjm19/free-llm-api-provider';
+    headers['X-Title'] = 'free-llm-api-provider';
+  }
+
+  return {
+    url,
+    headers,
+    body: { model: apiModelId, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 },
+  };
+}
+
+function getHeaderValue(headers, key) {
+  if (!headers) return null;
+  if (typeof headers.get === 'function') return headers.get(key);
+  return headers[key] ?? headers[key.toLowerCase()] ?? null;
+}
+
+function extractQuotaPercent(headers) {
+  const variants = [
+    ['x-ratelimit-remaining', 'x-ratelimit-limit'],
+    ['x-ratelimit-remaining-requests', 'x-ratelimit-limit-requests'],
+    ['ratelimit-remaining', 'ratelimit-limit'],
+    ['ratelimit-remaining-requests', 'ratelimit-limit-requests'],
+  ];
+
+  for (const [remainingKey, limitKey] of variants) {
+    const remainingRaw = getHeaderValue(headers, remainingKey);
+    const limitRaw = getHeaderValue(headers, limitKey);
+    const remaining = parseFloat(remainingRaw);
+    const limit = parseFloat(limitRaw);
+    if (Number.isFinite(remaining) && Number.isFinite(limit) && limit > 0) {
+      const pct = Math.round((remaining / limit) * 100);
+      return Math.max(0, Math.min(100, pct));
+    }
+  }
+
+  return null;
+}
+
+async function ping(apiKey, modelId, providerKey, url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), PING_TIMEOUT);
+  const t0 = performance.now();
+  
+  try {
+    const req = buildPingRequest(apiKey, modelId, providerKey, url);
+    const resp = await fetch(req.url, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: req.headers,
+      body: JSON.stringify(req.body),
+    });
+    
+    const code = resp.status >= 200 && resp.status < 300 ? '200' : String(resp.status);
+    return {
+      code,
+      ms: Math.round(performance.now() - t0),
+      quotaPercent: extractQuotaPercent(resp.headers),
+    };
+  } catch (err) {
+    const isTimeout = err.name === 'AbortError';
+    return {
+      code: isTimeout ? '000' : 'ERR',
+      ms: isTimeout ? PING_TIMEOUT : Math.round(performance.now() - t0),
+      quotaPercent: null,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function pingProvider(providerKey, apiKey, modelId) {
+  const provider = sources[providerKey];
+  if (!provider || !provider.url) {
+    return { provider: providerKey, status: 'no_endpoint', latency: -1, code: 'ERR', quotaPercent: null };
+  }
+
+  const result = await ping(apiKey, modelId, providerKey, provider.url);
+  
+  let status;
+  if (result.code === '200') status = 'up';
+  else if (result.code === '000') status = 'timeout';
+  else if (result.code === '401') status = 'auth_error';
+  else if (result.code === '429') status = 'rate_limited';
+  else if (result.code === 'ERR') status = 'offline';
+  else status = 'error';
+
+  return {
+    provider: providerKey,
+    status,
+    latency: result.ms,
+    code: result.code,
+    quotaPercent: result.quotaPercent,
+  };
+}
+
 async function runHealthCheck(config) {
   const checks = [];
+  const providerModels = new Map();
   
   for (const [providerKey, provider] of Object.entries(sources)) {
     if (!provider.url || provider.cliOnly) continue;
@@ -103,101 +168,144 @@ async function runHealthCheck(config) {
     const keys = getAllApiKeys(config, providerKey);
     if (keys.length === 0) continue;
     
+    // Get best model for this provider (first S+ or S or first available)
+    const models = require('./models').getModelsByProvider(providerKey);
+    const bestModel = models.find(m => m[2] === 'S+') || models.find(m => m[2] === 'S') || models[0];
+    const modelId = bestModel ? bestModel[0] : null;
+    providerModels.set(providerKey, { modelId, modelName: bestModel ? bestModel[1] : 'Unknown' });
+    
+    if (!modelId) continue;
+    
     // Check each key
     for (const key of keys) {
-      checks.push(pingProvider(providerKey, key));
+      checks.push(pingProvider(providerKey, key, modelId).then(r => ({...r, modelId})));
     }
   }
   
   const results = await Promise.all(checks);
   
-  // Update health state
+  // Group results by provider
+  const byProvider = new Map();
   for (const result of results) {
-    const existing = healthState.get(result.provider) || {
-      latency: -1,
-      status: 'unknown',
-      lastCheck: 0,
-      failures: 0,
-      successes: 0,
-      avgLatency: -1,
-      score: 0,
+    if (!byProvider.has(result.provider)) {
+      byProvider.set(result.provider, []);
+    }
+    byProvider.get(result.provider).push(result);
+  }
+  
+  // Update health state per provider
+  for (const [providerKey, providerResults] of byProvider) {
+    const existing = healthState.get(providerKey) || {
+      keys: [],
+      bestModel: providerModels.get(providerKey)?.modelName || 'Unknown',
+      overallScore: 0,
+      overallStatus: 'unknown',
     };
     
-    const isHealthy = result.status === 'healthy' || result.status === 'auth_error';
-    const isRateLimited = result.status === 'rate_limited';
-    
-    if (isHealthy) {
-      existing.successes++;
-      existing.failures = Math.max(0, existing.failures - 1);
-    } else {
-      existing.failures++;
-      existing.successes = Math.max(0, existing.successes - 1);
+    // Update per-key stats
+    for (const result of providerResults) {
+      let keyState = existing.keys.find(k => k.apiKey === result.provider + '_key');
+      if (!keyState) {
+        keyState = {
+          apiKey: result.provider + '_key',
+          latency: -1,
+          status: 'unknown',
+          lastCheck: 0,
+          failures: 0,
+          successes: 0,
+          avgLatency: -1,
+          score: 0,
+          quotaPercent: null,
+          pings: [],
+        };
+        existing.keys.push(keyState);
+      }
+      
+      const isHealthy = result.status === 'up' || result.status === 'auth_error';
+      
+      if (isHealthy) {
+        keyState.successes++;
+        keyState.failures = Math.max(0, keyState.failures - 1);
+      } else {
+        keyState.failures++;
+        keyState.successes = Math.max(0, keyState.successes - 1);
+      }
+      
+      keyState.status = result.status;
+      keyState.latency = result.latency;
+      keyState.lastCheck = Date.now();
+      keyState.quotaPercent = result.quotaPercent;
+      keyState.pings.push({ latency: result.latency, code: result.code, time: Date.now() });
+      
+      // Keep last 10 pings
+      if (keyState.pings.length > 10) keyState.pings.shift();
+      
+      // Calculate avg latency (exponential moving average)
+      if (keyState.avgLatency < 0 && result.latency > 0) {
+        keyState.avgLatency = result.latency;
+      } else if (result.latency > 0) {
+        keyState.avgLatency = keyState.avgLatency * 0.7 + result.latency * 0.3;
+      }
+      
+      // Calculate score
+      const totalChecks = keyState.successes + keyState.failures;
+      const successRate = totalChecks > 0 ? (keyState.successes / totalChecks) : 0;
+      
+      let latencyScore = 100;
+      if (keyState.avgLatency > 0) {
+        if (keyState.avgLatency < 500) latencyScore = 100;
+        else if (keyState.avgLatency < 1000) latencyScore = 80;
+        else if (keyState.avgLatency < 2000) latencyScore = 60;
+        else if (keyState.avgLatency < 5000) latencyScore = 40;
+        else latencyScore = 20;
+      }
+      
+      // Quota bonus
+      let quotaScore = 100;
+      if (keyState.quotaPercent !== null) {
+        quotaScore = keyState.quotaPercent;
+      }
+      
+      keyState.score = Math.round(successRate * 50 + latencyScore * 0.25 + quotaScore * 0.15 + 10);
+      keyState.score = Math.min(100, Math.max(0, keyState.score));
     }
     
-    existing.status = result.status;
-    existing.latency = result.latency;
-    existing.lastCheck = Date.now();
+    // Calculate overall provider score (best key)
+    const bestKey = existing.keys.reduce((best, current) => current.score > best.score ? current : best, existing.keys[0]);
+    existing.overallScore = bestKey ? bestKey.score : 0;
+    existing.overallStatus = bestKey ? bestKey.status : 'unknown';
     
-    // Calculate average latency (exponential moving average)
-    if (existing.avgLatency < 0) {
-      existing.avgLatency = result.latency;
-    } else if (result.latency > 0) {
-      existing.avgLatency = existing.avgLatency * 0.7 + result.latency * 0.3;
-    }
-    
-    // Calculate health score (0-100)
-    // Factors: success rate (60%), latency (30%), recency (10%)
-    const totalChecks = existing.successes + existing.failures;
-    const successRate = totalChecks > 0 ? (existing.successes / totalChecks) : 0;
-    
-    let latencyScore = 100;
-    if (existing.avgLatency > 0) {
-      if (existing.avgLatency < 500) latencyScore = 100;
-      else if (existing.avgLatency < 1000) latencyScore = 80;
-      else if (existing.avgLatency < 2000) latencyScore = 60;
-      else if (existing.avgLatency < 5000) latencyScore = 40;
-      else latencyScore = 20;
-    }
-    
-    // Rate limited providers get penalized
-    if (isRateLimited) {
-      latencyScore *= 0.5;
-    }
-    
-    existing.score = Math.round(successRate * 60 + latencyScore * 0.3 + 10);
-    existing.score = Math.min(100, Math.max(0, existing.score));
-    
-    healthState.set(result.provider, existing);
+    healthState.set(providerKey, existing);
   }
   
   return results;
 }
 
-/**
- * Start periodic health checks
- */
 function startHealthChecker(config) {
-  // Run immediately
   runHealthCheck(config);
-  
-  // Then periodically
   const interval = setInterval(() => {
     runHealthCheck(config).catch(console.error);
   }, HEALTH_CHECK_INTERVAL);
-  
   return interval;
 }
 
-/**
- * Get best providers sorted by health score
- */
 function getHealthyProviders() {
   const providers = [];
   for (const [key, state] of healthState.entries()) {
-    providers.push({ key, ...state });
+    providers.push({ 
+      key, 
+      score: state.overallScore, 
+      status: state.overallStatus,
+      latency: state.keys.length > 0 ? Math.min(...state.keys.map(k => k.avgLatency > 0 ? k.avgLatency : Infinity)) : -1,
+      avgLatency: state.keys.length > 0 
+        ? state.keys.reduce((sum, k) => sum + (k.avgLatency > 0 ? k.avgLatency : 0), 0) / state.keys.filter(k => k.avgLatency > 0).length 
+        : -1,
+      quota: state.keys.length > 0 ? state.keys[0].quotaPercent : null,
+      bestModel: state.bestModel,
+      keys: state.keys.length,
+    });
   }
   
-  // Sort by score (descending), then by latency (ascending)
   providers.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
     if (a.avgLatency > 0 && b.avgLatency > 0) return a.avgLatency - b.avgLatency;
@@ -207,13 +315,14 @@ function getHealthyProviders() {
   return providers;
 }
 
-/**
- * Check if provider is healthy enough to use
- */
 function isProviderHealthy(providerKey) {
   const state = healthState.get(providerKey);
-  if (!state) return true; // Unknown = give it a try
-  return state.score > 30; // Score > 30 is acceptable
+  if (!state) return true;
+  return state.overallScore > 30;
+}
+
+function getProviderHealth(providerKey) {
+  return healthState.get(providerKey) || null;
 }
 
 module.exports = {
@@ -221,5 +330,7 @@ module.exports = {
   getHealthState,
   getHealthyProviders,
   isProviderHealthy,
+  getProviderHealth,
   runHealthCheck,
+  PING_TIMEOUT,
 };

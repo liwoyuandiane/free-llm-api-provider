@@ -19,6 +19,8 @@ const os = require('os');
 const { loadConfig, saveConfig, getApiKey, isProviderEnabled, addApiKey, getEnabledProviders } = require('./config');
 const { sources, MODELS, ENV_VAR_NAMES, TIER_ORDER, getModelsByTier, getModelsByProvider, getApiProviders } = require('./models');
 const { startProxyServer, PROXY_PORT } = require('./proxy');
+const { startDashboard } = require('./status-dashboard');
+const { runHealthCheck, getHealthyProviders } = require('./health-checker');
 
 // ============================================================================
 // CONSTANTS
@@ -449,20 +451,25 @@ async function stopProxy() {
 
 function checkHealth() {
   return new Promise(resolve => {
-    const req = http.get(`http://localhost:${PROXY_PORT}/health`, res => {
+    const req = http.get(`http://localhost:${PROXY_PORT}/health`, { agent: false }, res => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
         try {
           const json = JSON.parse(data);
+          req.destroy();
           resolve(json);
         } catch {
+          req.destroy();
           resolve(null);
         }
       });
     });
-    req.on('error', () => resolve(null));
-    req.setTimeout(5000, () => {
+    req.on('error', () => {
+      req.destroy();
+      resolve(null);
+    });
+    req.setTimeout(3000, () => {
       req.destroy();
       resolve(null);
     });
@@ -475,28 +482,228 @@ function showLogs() {
 }
 
 // ============================================================================
+// FIABLE MODE - 10s reliability analysis
+// ============================================================================
+
+async function runFiableMode() {
+  console.log('\n⚡ Analyzing providers for reliability (10 seconds)...\n');
+  
+  const config = loadConfig();
+  const enabled = getEnabledProviders(config);
+  
+  if (enabled.length === 0) {
+    console.log('❌ No providers configured. Run: free-llm-api-provider --config');
+    return;
+  }
+  
+  // Run health check to get initial data
+  await runHealthCheck(config);
+  
+  const startTime = Date.now();
+  const analysisDuration = 10000;
+  
+  // Wait for analysis duration, re-checking every 2 seconds
+  const checks = [];
+  while (Date.now() - startTime < analysisDuration) {
+    await runHealthCheck(config);
+    checks.push(Date.now());
+    const remaining = Math.max(0, analysisDuration - (Date.now() - startTime));
+    if (remaining > 0) {
+      await new Promise(resolve => setTimeout(resolve, Math.min(2000, remaining)));
+    }
+  }
+  
+  // Get final results
+  const providers = getHealthyProviders();
+  
+  if (providers.length === 0 || providers[0].score === 0) {
+    console.log('❌ No reliable provider found');
+    return;
+  }
+  
+  const best = providers[0];
+  const provider = sources[best.key];
+  
+  console.log('\n✅ Most reliable provider:');
+  console.log(`   ${provider?.name || best.key}`);
+  console.log(`   Score: ${best.score}/100`);
+  console.log(`   Avg Latency: ${best.avgLatency > 0 ? Math.round(best.avgLatency) + 'ms' : 'N/A'}`);
+  console.log(`   Status: ${best.status === 'up' ? '✅ UP' : '❌ ' + best.status}`);
+  console.log(`   Best Model: ${best.bestModel || 'Unknown'}`);
+  console.log();
+  
+  // Show top 5
+  console.log('Top 5 providers:');
+  for (let i = 0; i < Math.min(5, providers.length); i++) {
+    const p = providers[i];
+    const src = sources[p.key];
+    console.log(`  ${i + 1}. ${src?.name || p.key} - Score: ${p.score}, Latency: ${p.avgLatency > 0 ? Math.round(p.avgLatency) + 'ms' : 'N/A'}, Status: ${p.status}`);
+  }
+  console.log();
+}
+
+// ============================================================================
+// OPENCODE CONFIG INTEGRATION
+// ============================================================================
+
+function findOpencodeConfig() {
+  const homedir = os.homedir();
+  const candidates = [
+    path.join(homedir, '.opencode', 'config.json'),
+    path.join(homedir, 'AppData', 'Roaming', 'opencode', 'config.json'),
+    path.join(homedir, '.config', 'opencode', 'config.json'),
+    path.join(homedir, 'opencode.json'),
+  ];
+  
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  
+  // Default to create in ~/.opencode/config.json
+  return candidates[0];
+}
+
+async function addOpencodeConfig() {
+  console.log('🔧 Configuring OpenCode integration...\n');
+  
+  const configPath = findOpencodeConfig();
+  const configDir = path.dirname(configPath);
+  
+  // Ensure directory exists
+  if (!fs.existsSync(configDir)) {
+    fs.mkdirSync(configDir, { recursive: true });
+  }
+  
+  // Read existing config or create new
+  let opencodeConfig = {};
+  if (fs.existsSync(configPath)) {
+    try {
+      const content = fs.readFileSync(configPath, 'utf8');
+      opencodeConfig = JSON.parse(content);
+      console.log(`📄 Found existing config: ${configPath}`);
+    } catch (err) {
+      console.log(`⚠️  Could not parse existing config, creating fresh one`);
+      opencodeConfig = {};
+    }
+  } else {
+    console.log(`📄 Creating new config: ${configPath}`);
+  }
+  
+  // Ensure $schema exists
+  if (!opencodeConfig.$schema) {
+    opencodeConfig.$schema = "https://opencode.ai/config.json";
+  }
+  
+  // Ensure provider section exists
+  if (!opencodeConfig.provider) {
+    opencodeConfig.provider = {};
+  }
+  
+  // Add our provider
+  opencodeConfig.provider.flap = {
+    npm: "@ai-sdk/openai-compatible",
+    name: "free-llm-api-provider",
+    options: {
+      baseURL: "http://localhost:4000/v1",
+      apiKey: "sk-free-llm-api-provider"
+    },
+    models: {
+      "tier-splus": {
+        name: "S+ Tier (Elite)",
+        limit: { context: 256000, output: 8192 }
+      },
+      "tier-s": {
+        name: "S Tier (Excellent)",
+        limit: { context: 256000, output: 8192 }
+      },
+      "tier-aplus": {
+        name: "A+ Tier (Very Capable)",
+        limit: { context: 131000, output: 8192 }
+      },
+      "tier-a": {
+        name: "A Tier (Solid)",
+        limit: { context: 128000, output: 8192 }
+      },
+      "tier-aminus": {
+        name: "A- Tier (Decent)",
+        limit: { context: 128000, output: 4096 }
+      },
+      "tier-bplus": {
+        name: "B+ Tier (Capable)",
+        limit: { context: 64000, output: 4096 }
+      },
+      "tier-b": {
+        name: "B Tier (Entry)",
+        limit: { context: 32000, output: 4096 }
+      },
+      "tier-c": {
+        name: "C Tier (Basic)",
+        limit: { context: 8000, output: 2048 }
+      }
+    }
+  };
+  
+  // Write config back
+  fs.writeFileSync(configPath, JSON.stringify(opencodeConfig, null, 2));
+  
+  console.log('✅ Provider added to OpenCode config!');
+  console.log(`   File: ${configPath}`);
+  console.log('');
+  console.log('Next steps:');
+  console.log('  1. Restart OpenCode completely');
+  console.log('  2. Run /connect');
+  console.log('  3. Select "flap" provider');
+  console.log('  4. Choose your tier (e.g., tier-b)');
+  console.log('');
+  console.log('Note: Existing providers in config are preserved.');
+}
+
+// ============================================================================
 // MAIN
 // ============================================================================
 
 async function main() {
   const args = process.argv.slice(2);
+  const firstArg = args[0]?.toLowerCase();
   
   // --help
-  if (args.includes('--help') || args.includes('-h') || args.length === 0) {
+  if (args.includes('--help') || args.includes('-h')) {
     console.log(`
 ${APP_NAME} - Local LLM proxy with automatic fallback
 
 Usage:
-  free-llm-api-provider              Start the proxy
-  free-llm-api-provider --config     Configure API keys (interactive wizard)
-  free-llm-api-provider --stop       Stop the proxy
-  free-llm-api-provider --restart    Restart the proxy
-  free-llm-api-provider --logs       Show logs
-  free-llm-api-provider --test       Test connection
-  free-llm-api-provider --show       Show configuration
-  free-llm-api-provider --models     List all available models
+  free-llm-api-provider              Start the proxy (default)
+  free-llm-api-provider start        Start the proxy
+  free-llm-api-provider --config          Configure API keys (interactive wizard)
+  free-llm-api-provider config            Alias for --config
+  free-llm-api-provider --opencode-config Add provider to OpenCode config
+  free-llm-api-provider opencode-config   Alias for --opencode-config
+  free-llm-api-provider --status          Real-time provider health dashboard
+  free-llm-api-provider status            Alias for --status
+  free-llm-api-provider --fiable          10s reliability analysis (best provider)
+  free-llm-api-provider fiable            Alias for --fiable
+  free-llm-api-provider stop              Stop the proxy
+  free-llm-api-provider --stop            Alias for stop
+  free-llm-api-provider restart           Restart the proxy
+  free-llm-api-provider --restart         Alias for restart
+  free-llm-api-provider --logs            Show logs
+  free-llm-api-provider logs              Alias for --logs
+  free-llm-api-provider --test            Test connection
+  free-llm-api-provider test              Alias for --test
+  free-llm-api-provider --show            Show configuration
+  free-llm-api-provider show              Alias for --show
+  free-llm-api-provider --models          List all available models
+  free-llm-api-provider models            Alias for --models
   free-llm-api-provider --models --tier S+   List S+ tier models
   free-llm-api-provider --models --provider groq   List Groq models
+
+Shortcuts (flap alias):
+  flap status                        Same as free-llm-api-provider --status
+  flap test                          Same as free-llm-api-provider --test
+  flap stop                          Same as free-llm-api-provider stop
+  flap restart                       Same as free-llm-api-provider restart
 
 Environment Variables:
   You can also set API keys via environment variables:
@@ -505,53 +712,65 @@ Environment Variables:
 API Key: ${DEFAULT_KEY}
 Port: ${PROXY_PORT}
 `);
-    return;
+    process.exit(0);
   }
   
   // --config
   if (args.includes('--config')) {
     await configWizard();
-    return;
+    process.exit(0);
   }
   
-  // --show / --status
-  if (args.includes('--show') || args.includes('--status')) {
+  // --show
+  if (args.includes('--show')) {
     showConfig();
+    process.exit(0);
+  }
+  
+  // --status / status (real-time health dashboard) - stays open
+  if (args.includes('--status') || firstArg === 'status') {
+    await startDashboard();
     return;
   }
   
-  // --models
-  if (args.includes('--models')) {
+  // --fiable / fiable (10s reliability analysis)
+  if (args.includes('--fiable') || firstArg === 'fiable') {
+    await runFiableMode();
+    process.exit(0);
+  }
+  
+  // --models / models
+  if (args.includes('--models') || firstArg === 'models') {
     const tierIdx = args.indexOf('--tier');
     const providerIdx = args.indexOf('--provider');
     const filter = {};
     if (tierIdx !== -1 && args[tierIdx + 1]) filter.tier = args[tierIdx + 1];
     if (providerIdx !== -1 && args[providerIdx + 1]) filter.provider = args[providerIdx + 1];
     showModels(filter);
-    return;
+    process.exit(0);
   }
   
-  // --stop
-  if (args.includes('--stop')) {
+  // --stop / stop
+  if (args.includes('--stop') || firstArg === 'stop') {
     await stopProxy();
-    return;
+    process.exit(0);
   }
   
-  // --restart
-  if (args.includes('--restart')) {
+  // --restart / restart
+  if (args.includes('--restart') || firstArg === 'restart') {
     await stopProxy();
     await startProxy();
     return;
   }
   
-  // --logs
-  if (args.includes('--logs')) {
+  // --logs / logs
+  if (args.includes('--logs') || firstArg === 'logs') {
     showLogs();
-    return;
+    process.exit(0);
   }
   
-  // --test
-  if (args.includes('--test')) {
+  // --test / test
+  if (args.includes('--test') || firstArg === 'test') {
     const health = await checkHealth();
     if (health) {
       console.log('✅ Proxy is healthy');
@@ -560,15 +779,34 @@ Port: ${PROXY_PORT}
       console.log('❌ Proxy not responding');
       console.log('   Run: free-llm-api-provider');
     }
-    return;
+    process.exit(0);
   }
   
-  // Default: start proxy
-  const config = loadConfig();
-  const enabled = getEnabledProviders(config);
+  // --show / show
+  if (args.includes('--show') || firstArg === 'show') {
+    showConfig();
+    process.exit(0);
+  }
   
-  if (enabled.length === 0) {
-    console.log(`
+  // --config / config
+  if (args.includes('--config') || firstArg === 'config') {
+    await configWizard();
+    process.exit(0);
+  }
+  
+  // --opencode-config / opencode-config
+  if (args.includes('--opencode-config') || firstArg === 'opencode-config') {
+    await addOpencodeConfig();
+    process.exit(0);
+  }
+  
+  // Default: start proxy (no args or "start")
+  if (args.length === 0 || firstArg === 'start') {
+    const config = loadConfig();
+    const enabled = getEnabledProviders(config);
+    
+    if (enabled.length === 0) {
+      console.log(`
 ❌ No API keys configured.
 
 Run the configuration wizard first:
@@ -578,19 +816,27 @@ Or set environment variables:
   export GROQ_API_KEY=your_key_here
   export NVIDIA_API_KEY=your_key_here
 `);
-    process.exit(1);
+      process.exit(1);
+    }
+    
+    const health = await checkHealth();
+    if (health) {
+      console.log(`✅ ${APP_NAME} is already running on port ${PROXY_PORT}`);
+      console.log(`   Health: ${health.healthy_endpoints?.length || 0} endpoints`);
+      console.log();
+      console.log('🔑 API Key:', DEFAULT_KEY);
+      console.log('🌐 Endpoint: http://localhost:4000/v1');
+      process.exit(0);
+    } else {
+      await startProxy();
+    }
+    return;
   }
   
-  const health = await checkHealth();
-  if (health) {
-    console.log(`✅ ${APP_NAME} is already running on port ${PROXY_PORT}`);
-    console.log(`   Health: ${health.healthy_endpoints?.length || 0} endpoints`);
-    console.log();
-    console.log('🔑 API Key:', DEFAULT_KEY);
-    console.log('🌐 Endpoint: http://localhost:4000/v1');
-  } else {
-    await startProxy();
-  }
+  // Unknown command
+  console.log(`❌ Unknown command: ${args.join(' ')}`);
+  console.log('Run free-llm-api-provider --help for usage');
+  process.exit(1);
 }
 
 main().catch(err => {

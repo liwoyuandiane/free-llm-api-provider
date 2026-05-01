@@ -24,14 +24,18 @@ Free AI APIs break — rate limits, downtime, capacity issues. Your coding assis
 
 ## What It Does
 
+- **Health-aware routing**: Real-time ping monitoring routes to the healthiest provider instantly — no blind iteration
 - **Auto-failover**: 429/500/timeout → switch provider automatically
 - **Sticky provider**: Once a provider works, it keeps using it until it fails (faster response)
 - **Multi-key support**: Add multiple keys for the same provider, tries them all before failing over
 - **238 models** across 25 providers (NVIDIA, Groq, OpenRouter, Cerebras, etc.)
-- **Tier-based routing**: `tier-splus` (elite) → `tier-b` (default)
+- **Tier-based routing**: `tier-splus` (elite) → `tier-b` (default), with health scores overriding tiers
+- **Real-time status dashboard**: `--status` shows live provider health, latency, and quota
+- **10s reliability analysis**: `--fiable` finds the most stable provider right now
 - **OpenAI-compatible**: Works with Cursor, VS Code, Claude Desktop, OpenCode, any client
-- **Self-contained**: Built-in config manager + model catalog. No separate tools needed.
+- **Self-contained**: Built-in config manager + model catalog + health checker. No separate tools needed.
 - **Zero dependencies**: Pure Node.js. No Python, no Docker required.
+- **Core replicated from free-coding-models**: Uses the same ping/quota/extraction logic
 
 ## Supported Providers
 
@@ -104,34 +108,70 @@ Proxy runs at `http://localhost:4000`.
 
 ## CLI Commands
 
+All commands work **with or without `--`**:
+
 ```bash
 # Start proxy (default)
 free-llm-api-provider
+free-llm-api-provider start
 
 # Interactive config wizard
 free-llm-api-provider --config
+free-llm-api-provider config
 
 # Show current config
 free-llm-api-provider --show
+free-llm-api-provider show
+
+# Real-time provider health dashboard (live updating)
+free-llm-api-provider --status
+free-llm-api-provider status
+
+# 10-second reliability analysis (finds best provider right now)
+free-llm-api-provider --fiable
+free-llm-api-provider fiable
 
 # List all 238 models
 free-llm-api-provider --models
+free-llm-api-provider models
 
 # List S+ tier only
 free-llm-api-provider --models --tier S+
+free-llm-api-provider models --tier S+
 
 # List models for specific provider
 free-llm-api-provider --models --provider groq
+free-llm-api-provider models --provider groq
 
 # Stop / restart proxy
 free-llm-api-provider --stop
+free-llm-api-provider stop
 free-llm-api-provider --restart
+free-llm-api-provider restart
 
 # View proxy logs
 free-llm-api-provider --logs
+free-llm-api-provider logs
 
 # Test proxy health
 free-llm-api-provider --test
+free-llm-api-provider test
+```
+
+### Shortcuts with `flap` alias
+
+After installation, you can also use the shorter `flap` command:
+
+```bash
+flap status          # Same as free-llm-api-provider --status
+flap test            # Same as free-llm-api-provider --test
+flap stop            # Same as free-llm-api-provider stop
+flap restart         # Same as free-llm-api-provider restart
+flap show            # Same as free-llm-api-provider --show
+flap models          # Same as free-llm-api-provider --models
+flap fiable          # Same as free-llm-api-provider --fiable
+flap logs            # Same as free-llm-api-provider --logs
+flap config          # Same as free-llm-api-provider --config
 ```
 
 ## API Usage
@@ -167,6 +207,23 @@ curl http://localhost:4000/v1/chat/completions \
 
 ## How Failover Works
 
+### Health-Aware Routing (New)
+
+The proxy continuously pings all providers in the background. Each request is routed to the **healthiest provider first** — no blind iteration.
+
+```
+Provider Health Scores (updated every 30s):
+  Groq      → Score: 95, Latency: 198ms ✅
+  Cerebras  → Score: 80, Latency: 299ms
+  OpenRouter→ Score: 45, Latency: 1200ms (slow)
+
+Request → Groq (healthiest) → SUCCESS ✓
+```
+
+If the healthiest fails, it tries the next in score order. If no health data exists yet, falls back to tier-based ordering.
+
+### Traditional Failover (Fallback)
+
 ```
 Request → NVIDIA → 429 rate limit
         → Groq   → 500 error
@@ -180,8 +237,6 @@ Request 2+: Use OpenRouter directly (fast!)
 Request N: OpenRouter fails → Try next provider → NVIDIA ✅
 ```
 
-Proxy handles retries + provider switching. Your client sees only success or final exhaust error.
-
 **Multi-key failover:**
 ```
 Groq key 1 → 401 ❌
@@ -189,17 +244,24 @@ Groq key 2 → 429 ❌
 Groq key 3 → 200 ✅  ← Stays here until it fails
 ```
 
+Proxy handles retries + provider switching. Your client sees only success or final exhaust error.
+
 ## Model Tiers
 
-| Tier | SWE-bench | Best For |
-|------|-----------|----------|
-| `tier-splus` | 70%+ | Complex refactors, frontier coding |
-| `tier-s` | 60-70% | Most coding tasks |
-| `tier-aplus` | 50-60% | Solid alternatives |
-| `tier-a` | 40-50% | Good general use |
-| `tier-aminus` | 35-40% | Decent backup |
-| `tier-bplus` | 30-35% | Smaller tasks |
-| `tier-b` | 20-30% | Default fallback |
+Tiers based on SWE-bench scores (coding benchmark), replicated from free-coding-models:
+
+| Tier | Score | Description |
+|------|-------|-------------|
+| `S+` | 70%+ | Frontier models. Best for complex refactors, architecture decisions |
+| `S`  | 60-70% | Excellent coding models. Reliable for most tasks |
+| `A+` | 50-60% | Very capable. Great alternatives to frontier models |
+| `A`  | 40-50% | Solid performers. Good for general coding |
+| `A-` | 35-40% | Decent. Usable for simpler tasks |
+| `B+` | 30-35% | Capable for smaller tasks and quick scripts |
+| `B`  | 20-30% | Entry-level. Default fallback tier |
+| `C`  | <20%   | Basic models. Last resort only |
+
+Use tier aliases in requests: `tier-splus`, `tier-s`, `tier-aplus`, `tier-a`, `tier-aminus`, `tier-bplus`, `tier-b`
 
 ## Config File
 
@@ -242,9 +304,12 @@ Stored at `~/.free-llm-api-provider.json`:
 
 - **CLI + Config**: Pure Node.js, zero runtime dependencies
 - **Model Catalog**: 238 models with tiers, replicated from free-coding-models
-- **Proxy**: Node.js HTTP proxy with sticky provider + failover
+- **Health Checker**: Real-time ping monitoring with quota extraction from rate limit headers (core from free-coding-models)
+- **Proxy**: Node.js HTTP proxy with health-aware routing + sticky provider + failover
 - **Multi-key**: Automatically tries all keys per provider before failover
 - **Circuit breaker**: Temporarily skips failing providers
+- **Status Dashboard**: Live terminal UI showing provider health (`--status`)
+- **Reliability Analysis**: 10s analysis mode to find the most stable provider (`--fiable`)
 
 ## License
 

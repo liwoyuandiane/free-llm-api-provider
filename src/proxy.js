@@ -9,7 +9,36 @@ const http = require('http');
 const https = require('https');
 const url = require('url');
 const { loadConfig, getEnabledProviders, getAllApiKeys } = require('./config');
-const { sources, getModelsByProvider, ENV_VAR_NAMES } = require('./models');
+const { sources, getModelsByProvider, ENV_VAR_NAMES, getModelLimits } = require('./models');
+
+// Token estimation (rough: ~4 chars per token for English, ~2 for CJK)
+function estimateTokens(messages) {
+  if (!Array.isArray(messages)) return 0;
+  let chars = 0;
+  for (const msg of messages) {
+    if (msg.content) {
+      chars += String(msg.content).length;
+    }
+    if (msg.role) {
+      chars += String(msg.role).length;
+    }
+  }
+  // Add overhead for message formatting
+  return Math.ceil(chars / 3.5) + messages.length * 4;
+}
+
+// Check if conversation fits in provider's model context
+function checkContextFit(provider, reqBody) {
+  const modelId = provider.models[0];
+  if (!modelId) return { fits: true, tokens: 0, limit: 0 };
+  
+  const limits = getModelLimits(modelId);
+  const estimatedTokens = estimateTokens(reqBody.messages);
+  const fits = estimatedTokens <= limits.context;
+  
+  return { fits, tokens: estimatedTokens, limit: limits.context, model: modelId };
+}
+const { getHealthyProviders, isProviderHealthy } = require('./health-checker');
 
 const PROXY_PORT = 4000;
 const DEFAULT_KEY = 'sk-free-llm-api-provider';
@@ -36,7 +65,7 @@ let activeProvider = null; // { key, apiKey, name, url, models }
 let lastProviderSuccess = new Map(); // providerKey -> timestamp of last success
 
 /**
- * Get providers ordered by tier priority (best first)
+ * Get providers ordered by health score (best first), falling back to tier priority
  */
 function getPrioritizedProviders(config) {
   const enabled = getEnabledProviders(config);
@@ -44,13 +73,25 @@ function getPrioritizedProviders(config) {
   
   const tierPriority = { 'S+': 0, 'S': 1, 'A+': 2, 'A': 3, 'A-': 4, 'B+': 5, 'B': 6, 'C': 7 };
   
+  // Get health data if available
+  const healthyProviders = getHealthyProviders();
+  const healthMap = new Map();
+  for (const hp of healthyProviders) {
+    healthMap.set(hp.key, hp);
+  }
+  
   for (const key of enabled) {
     const provider = sources[key];
     if (!provider || !provider.url) continue;
     
     const models = getModelsByProvider(key);
     const bestTier = models.length > 0 ? models[0][2] : 'B';
-    const priority = tierPriority[bestTier] || 99;
+    const tierPriorityVal = tierPriority[bestTier] || 99;
+    
+    // Get health score if available
+    const health = healthMap.get(key);
+    const healthScore = health ? health.score : -1;
+    const healthLatency = health && health.avgLatency > 0 ? health.avgLatency : Infinity;
     
     // Get ALL API keys for this provider (supports multiple keys)
     const allKeys = getAllApiKeys(config, key);
@@ -65,14 +106,27 @@ function getPrioritizedProviders(config) {
         keyIndex: i,
         totalKeys: allKeys.length,
         envVar: ENV_VAR_NAMES[key],
-        priority,
+        priority: tierPriorityVal,
+        healthScore,
+        healthLatency,
         models: models.map(m => m[0]),
       });
     }
   }
   
-  // Sort by priority (lower number = better tier)
-  providers.sort((a, b) => a.priority - b.priority);
+  // Sort by health score first (if available), then by tier priority
+  providers.sort((a, b) => {
+    // If both have health scores, sort by score desc, then latency asc
+    if (a.healthScore >= 0 && b.healthScore >= 0) {
+      if (b.healthScore !== a.healthScore) return b.healthScore - a.healthScore;
+      if (a.healthLatency > 0 && b.healthLatency > 0) return a.healthLatency - b.healthLatency;
+    }
+    // If only one has health score, prefer the one with health data
+    if (a.healthScore >= 0 && b.healthScore < 0) return -1;
+    if (b.healthScore >= 0 && a.healthScore < 0) return 1;
+    // Fall back to tier priority
+    return a.priority - b.priority;
+  });
   
   return providers;
 }
@@ -120,9 +174,144 @@ function recordSuccess(providerKey) {
 }
 
 /**
+ * Extract thinking blocks from text.
+ * Handles streaming where tags may be split across chunks.
+ */
+class ThinkingExtractor {
+  constructor() {
+    this.buffer = '';
+    this.inThinking = false;
+    this.thinkingContent = '';
+  }
+
+  processChunk(text) {
+    this.buffer += text;
+    const results = [];
+
+    while (this.buffer.length > 0) {
+      if (this.inThinking) {
+        const closeIndex = this.buffer.indexOf('</thought>');
+        if (closeIndex !== -1) {
+          // Close tag found
+          this.thinkingContent += this.buffer.substring(0, closeIndex);
+          this.buffer = this.buffer.substring(closeIndex + 10);
+          this.inThinking = false;
+          results.push({ type: 'thinking', content: this.thinkingContent });
+          this.thinkingContent = '';
+        } else {
+          // No close tag yet - check if we have partial close tag at end
+          const partialClose = this.getPartialCloseTagLength();
+          if (partialClose > 0) {
+            // Keep partial close tag in buffer
+            this.thinkingContent += this.buffer.substring(0, this.buffer.length - partialClose);
+            this.buffer = this.buffer.substring(this.buffer.length - partialClose);
+          } else {
+            this.thinkingContent += this.buffer;
+            this.buffer = '';
+          }
+          break;
+        }
+      } else {
+        const openIndex = this.buffer.indexOf('<thought>');
+        if (openIndex !== -1) {
+          // Content before thought
+          const beforeThought = this.buffer.substring(0, openIndex);
+          if (beforeThought) {
+            results.push({ type: 'content', content: beforeThought });
+          }
+          this.buffer = this.buffer.substring(openIndex + 9);
+          this.inThinking = true;
+          this.thinkingContent = '';
+        } else {
+          // No open tag - check if we have partial open tag at end
+          const partialOpen = this.getPartialOpenTagLength();
+          if (partialOpen > 0) {
+            const content = this.buffer.substring(0, this.buffer.length - partialOpen);
+            if (content) {
+              results.push({ type: 'content', content: content });
+            }
+            this.buffer = this.buffer.substring(this.buffer.length - partialOpen);
+          } else {
+            if (this.buffer) {
+              results.push({ type: 'content', content: this.buffer });
+            }
+            this.buffer = '';
+          }
+          break;
+        }
+      }
+    }
+
+    return results;
+  }
+
+  getPartialOpenTagLength() {
+    // Check if buffer ends with partial '<thought>'
+    const tag = '<thought>';
+    for (let i = 1; i <= Math.min(this.buffer.length, tag.length); i++) {
+      if (tag.startsWith(this.buffer.substring(this.buffer.length - i))) {
+        return i;
+      }
+    }
+    return 0;
+  }
+
+  getPartialCloseTagLength() {
+    // Check if buffer ends with partial '</thought>'
+    const tag = '</thought>';
+    for (let i = 1; i <= Math.min(this.buffer.length, tag.length); i++) {
+      if (tag.startsWith(this.buffer.substring(this.buffer.length - i))) {
+        return i;
+      }
+    }
+    return 0;
+  }
+
+  flush() {
+    const results = [];
+    if (this.inThinking) {
+      results.push({ type: 'thinking', content: this.thinkingContent + this.buffer });
+    } else if (this.buffer) {
+      results.push({ type: 'content', content: this.buffer });
+    }
+    this.buffer = '';
+    this.thinkingContent = '';
+    this.inThinking = false;
+    return results;
+  }
+}
+
+/**
+ * Clean response: extract thinking blocks and separate reasoning_content.
+ */
+function cleanResponseBody(bodyStr) {
+  try {
+    const obj = JSON.parse(bodyStr);
+    if (obj.choices && Array.isArray(obj.choices)) {
+      for (const choice of obj.choices) {
+        if (choice.message && choice.message.content) {
+          const extractor = new ThinkingExtractor();
+          const parts = extractor.processChunk(choice.message.content);
+          const thinking = parts.filter(p => p.type === 'thinking').map(p => p.content).join('\n\n');
+          const content = parts.filter(p => p.type === 'content').map(p => p.content).join('');
+          
+          choice.message.content = content;
+          if (thinking) {
+            choice.message.reasoning_content = thinking;
+          }
+        }
+      }
+    }
+    return JSON.stringify(obj);
+  } catch {
+    return bodyStr;
+  }
+}
+
+/**
  * Forward request to a provider
  */
-function forwardToProvider(provider, requestBody) {
+function forwardToProvider(provider, requestBody, onChunk = null) {
   return new Promise((resolve, reject) => {
     // Use provider.url directly - already includes full endpoint path
     const targetUrl = provider.url.includes('/chat/completions') 
@@ -136,16 +325,44 @@ function forwardToProvider(provider, requestBody) {
     // Prepare request body - replace model if needed
     let body = JSON.parse(JSON.stringify(requestBody));
     
-    // Map model names
+    // DEBUG: Log complete received body
+    console.log(`[Proxy] DEBUG Received body keys: ${Object.keys(body).join(', ')}`);
+    if (body.maxOutputTokens !== undefined) {
+      console.log(`[Proxy] DEBUG maxOutputTokens=${body.maxOutputTokens} (type: ${typeof body.maxOutputTokens})`);
+    }
+    
+    // Map model names FIRST to know the actual model
+    let selectedModelId = body.model;
     if (body.model && body.model.startsWith('tier-')) {
-      // Pick first available model for this provider
       const targetModel = provider.models[0];
       if (targetModel) {
         body.model = targetModel;
+        selectedModelId = targetModel;
       }
     }
     
+    // Get model limits
+    const limits = getModelLimits(selectedModelId);
+    
+    // ALWAYS use model's real limits, ignore whatever the IDE sends
+    // Remove IDE-specific params that providers don't understand
+    delete body.maxOutputTokens;  // Google/Gemini format
+    delete body.responseModalities;
+    delete body.safetySettings;
+    
+    // Also check nested objects for maxOutputTokens (some SDKs nest params)
+    if (body.generationConfig) {
+      delete body.generationConfig.maxOutputTokens;
+    }
+    
+    // Always set max_tokens to the model's maximum output capability
+    body.max_tokens = limits.output;
+    
     const bodyStr = JSON.stringify(body);
+    console.log(`[Proxy] Using model limits: context=${limits.context}, output=${limits.output} for ${selectedModelId}`);
+    console.log(`[Proxy] DEBUG Forwarding body keys: ${Object.keys(body).join(', ')}`);
+    
+    const isStreaming = body.stream === true;
     
     const options = {
       hostname: parsedUrl.hostname,
@@ -161,16 +378,115 @@ function forwardToProvider(provider, requestBody) {
     };
     
     const keyInfo = provider.totalKeys > 1 ? ` [key ${provider.keyIndex + 1}/${provider.totalKeys}]` : '';
-    console.log(`[Proxy] Trying provider: ${provider.key} (${provider.name})${keyInfo}`);
+    console.log(`[Proxy] Trying provider: ${provider.key} (${provider.name})${keyInfo} ${isStreaming ? '(streaming)' : ''}`);
     
     const req = client.request(options, (res) => {
+      // Check for error status even in streaming mode
+      if (res.statusCode >= 400) {
+        console.log(`[Proxy] ❌ ${provider.key} error (${res.statusCode}) in streaming mode`);
+        recordFailure(provider.key);
+        let errorData = '';
+        res.on('data', chunk => errorData += chunk);
+        res.on('end', () => {
+          reject({ status: res.statusCode, error: errorData, provider: provider.key });
+        });
+        return;
+      }
+      
+      // STREAMING MODE: forward chunks directly
+      if (isStreaming && onChunk) {
+        console.log(`[Proxy] ✅ ${provider.key} streaming started (${res.statusCode})`);
+        recordSuccess(provider.key);
+        
+        const extractor = new ThinkingExtractor();
+        
+        res.on('data', (chunk) => {
+          const chunkStr = chunk.toString();
+          // Ensure proper SSE format: lines must start with "data: " and end with "\n\n"
+          const lines = chunkStr.split('\n').filter(line => line.trim());
+          for (const line of lines) {
+            if (line.startsWith('data:')) {
+              const jsonPayload = line.substring(5).trim();
+              try {
+                const parsed = JSON.parse(jsonPayload);
+                if (parsed.choices && parsed.choices[0] && parsed.choices[0].delta) {
+                  const delta = parsed.choices[0].delta;
+                  const content = delta.content || '';
+                  
+                  // Extract thinking blocks from content
+                  const parts = extractor.processChunk(content);
+                  
+                  for (const part of parts) {
+                    const newDelta = { ...delta };
+                    if (part.type === 'thinking') {
+                      newDelta.reasoning_content = part.content;
+                      delete newDelta.content;
+                    } else {
+                      newDelta.content = part.content;
+                    }
+                    parsed.choices[0].delta = newDelta;
+                    onChunk('data: ' + JSON.stringify(parsed) + '\n\n', false, provider.key);
+                  }
+                } else {
+                  onChunk(line + '\n\n', false, provider.key);
+                }
+              } catch {
+                onChunk(line + '\n\n', false, provider.key);
+              }
+            } else {
+              // Wrap raw JSON lines in SSE format
+              onChunk('data: ' + line + '\n\n', false, provider.key);
+            }
+          }
+        });
+        
+        res.on('end', () => {
+          // Flush any remaining thinking content
+          const finalParts = extractor.flush();
+          for (const part of finalParts) {
+            if (part.type === 'thinking') {
+              const parsed = {
+                choices: [{
+                  delta: {
+                    reasoning_content: part.content
+                  }
+                }]
+              };
+              onChunk('data: ' + JSON.stringify(parsed) + '\n\n', false, provider.key);
+            } else if (part.content) {
+              const parsed = {
+                choices: [{
+                  delta: {
+                    content: part.content
+                  }
+                }]
+              };
+              onChunk('data: ' + JSON.stringify(parsed) + '\n\n', false, provider.key);
+            }
+          }
+          
+          onChunk(null, true, provider.key);
+          resolve({ status: res.statusCode, body: '', provider: provider.key, streaming: true });
+        });
+        
+        res.on('error', (err) => {
+          console.log(`[Proxy] ❌ ${provider.key} streaming error: ${err.message}`);
+          recordFailure(provider.key);
+          reject({ status: 0, error: err.message, provider: provider.key });
+        });
+        
+        return;
+      }
+      
+      // NON-STREAMING MODE: collect full response
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
         if (res.statusCode >= 200 && res.statusCode < 300) {
           console.log(`[Proxy] ✅ ${provider.key} succeeded (${res.statusCode})`);
           recordSuccess(provider.key);
-          resolve({ status: res.statusCode, body: data, provider: provider.key });
+          const cleanedData = cleanResponseBody(data);
+          resolve({ status: res.statusCode, body: cleanedData, provider: provider.key });
         } else if (res.statusCode === 429) {
           console.log(`[Proxy] ❌ ${provider.key} rate limited (429)`);
           recordFailure(provider.key);
@@ -209,7 +525,8 @@ function forwardToProvider(provider, requestBody) {
  * Handle chat completions with failover
  * Strategy: Stick to the active provider until it fails, then failover
  */
-async function handleChatCompletions(reqBody) {
+async function handleChatCompletions(reqBody, onStreamChunk = null) {
+  const isStreaming = reqBody.stream === true;
   const config = loadConfig();
   const providers = getPrioritizedProviders(config);
   
@@ -221,63 +538,75 @@ async function handleChatCompletions(reqBody) {
   
   // First, try the active provider if we have one and it's still valid
   if (activeProvider && !isCircuitOpen(activeProvider.key)) {
-    // Verify the active provider is still in our configured list
     const stillConfigured = providers.find(p => p.key === activeProvider.key && p.apiKey === activeProvider.apiKey);
     if (stillConfigured) {
-      try {
-        console.log(`[Proxy] Using active provider: ${activeProvider.key}`);
-        const result = await forwardToProvider(stillConfigured, reqBody);
-        
-        // Update stats
-        stats.totalRequests++;
-        stats.successfulRequests++;
-        stats.providerUsage.set(activeProvider.key, (stats.providerUsage.get(activeProvider.key) || 0) + 1);
-        lastProviderSuccess.set(activeProvider.key, Date.now());
-        
-        // Parse and modify response
-        try {
-          const responseObj = JSON.parse(result.body);
-          if (responseObj.model) {
-            responseObj.model = `${activeProvider.key}/${responseObj.model}`;
-          }
-          return {
-            status: result.status,
-            body: JSON.stringify(responseObj),
-            provider: activeProvider.key,
-          };
-        } catch {
-          return result;
-        }
-      } catch (err) {
-        console.log(`[Proxy] Active provider ${activeProvider.key} failed, initiating failover...`);
-        errors.push({ provider: activeProvider.key, error: err.error || err.message });
-        stats.providerUsage.set(activeProvider.key, (stats.providerUsage.get(activeProvider.key) || 0) + 1);
-        // Clear active provider since it failed
+      const contextCheck = checkContextFit(stillConfigured, reqBody);
+      if (!contextCheck.fits) {
+        console.log(`[Proxy] ⚠️ Active provider ${activeProvider.key} model ${contextCheck.model} context too small (${contextCheck.tokens} > ${contextCheck.limit}), skipping...`);
+        errors.push({ provider: activeProvider.key, error: `Context too small: ${contextCheck.tokens} > ${contextCheck.limit}` });
         activeProvider = null;
+      } else {
+        try {
+          console.log(`[Proxy] Using active provider: ${activeProvider.key} (${contextCheck.tokens} tokens / ${contextCheck.limit} limit)`);
+          const result = await forwardToProvider(stillConfigured, reqBody, onStreamChunk);
+          
+          if (result.streaming) {
+            return result;
+          }
+          
+          stats.totalRequests++;
+          stats.successfulRequests++;
+          stats.providerUsage.set(activeProvider.key, (stats.providerUsage.get(activeProvider.key) || 0) + 1);
+          lastProviderSuccess.set(activeProvider.key, Date.now());
+          
+          try {
+            const responseObj = JSON.parse(result.body);
+            if (responseObj.model) {
+              responseObj.model = `${activeProvider.key}/${responseObj.model}`;
+            }
+            const limits = getModelLimits(responseObj.model?.replace(activeProvider.key + '/', '') || stillConfigured.models[0]);
+            return { status: result.status, body: JSON.stringify(responseObj), provider: activeProvider.key, limits };
+          } catch {
+            return { ...result, limits: getModelLimits(stillConfigured.models[0]) };
+          }
+        } catch (err) {
+          console.log(`[Proxy] Active provider ${activeProvider.key} failed, initiating failover...`);
+          errors.push({ provider: activeProvider.key, error: err.error || err.message });
+          stats.providerUsage.set(activeProvider.key, (stats.providerUsage.get(activeProvider.key) || 0) + 1);
+          activeProvider = null;
+        }
       }
     } else {
-      // Provider no longer configured, clear it
       activeProvider = null;
     }
   }
   
   // Failover: try providers in priority order
   for (const provider of providers) {
-    // Skip if circuit breaker is open
     if (isCircuitOpen(provider.key)) {
       errors.push({ provider: provider.key, error: 'Circuit breaker open' });
       continue;
     }
     
+    const contextCheck = checkContextFit(provider, reqBody);
+    if (!contextCheck.fits) {
+      console.log(`[Proxy] ⚠️ Provider ${provider.key} model ${contextCheck.model} context too small (${contextCheck.tokens} > ${contextCheck.limit}), skipping...`);
+      errors.push({ provider: provider.key, error: `Context too small: ${contextCheck.tokens} > ${contextCheck.limit}` });
+      continue;
+    }
+    
     try {
-      const result = await forwardToProvider(provider, reqBody);
+      console.log(`[Proxy] Trying provider: ${provider.key} (${contextCheck.tokens} tokens / ${contextCheck.limit} limit)`);
+      const result = await forwardToProvider(provider, reqBody, onStreamChunk);
       
-      // Update stats
+      if (result.streaming) {
+        return result;
+      }
+      
       stats.totalRequests++;
       stats.successfulRequests++;
       stats.providerUsage.set(provider.key, (stats.providerUsage.get(provider.key) || 0) + 1);
       
-      // Set this provider as active since it worked
       activeProvider = {
         key: provider.key,
         apiKey: provider.apiKey,
@@ -288,24 +617,18 @@ async function handleChatCompletions(reqBody) {
       lastProviderSuccess.set(provider.key, Date.now());
       console.log(`[Proxy] Set active provider: ${provider.key}`);
       
-      // Parse and modify response to show which provider served it
       try {
         const responseObj = JSON.parse(result.body);
         if (responseObj.model) {
           responseObj.model = `${provider.key}/${responseObj.model}`;
         }
-        return {
-          status: result.status,
-          body: JSON.stringify(responseObj),
-          provider: provider.key,
-        };
+        const limits = getModelLimits(responseObj.model?.replace(provider.key + '/', '') || provider.models[0]);
+        return { status: result.status, body: JSON.stringify(responseObj), provider: provider.key, limits };
       } catch {
-        return result;
+        return { ...result, limits: getModelLimits(provider.models[0]) };
       }
     } catch (err) {
       errors.push({ provider: provider.key, error: err.error || err.message });
-      
-      // Update stats
       stats.providerUsage.set(provider.key, (stats.providerUsage.get(provider.key) || 0) + 1);
     }
   }
@@ -392,14 +715,78 @@ function createServer() {
       req.on('end', async () => {
         try {
           const requestBody = JSON.parse(body);
+          const isStreaming = requestBody.stream === true;
           
-          const result = await handleChatCompletions(requestBody);
-          
-          res.writeHead(result.status, { 
-            'Content-Type': 'application/json',
-            'X-Provider': result.provider,
-          });
-          res.end(result.body);
+          if (isStreaming) {
+            // STREAMING MODE: Try providers without sending headers first
+            let providerName = 'unknown';
+            let headersSent = false;
+            const chunkBuffer = [];
+            
+            const onChunk = (chunk, isDone, provider) => {
+              if (provider && providerName === 'unknown') {
+                providerName = provider;
+              }
+              
+              if (isDone) {
+                if (!headersSent) {
+                  // Provider succeeded but no chunks arrived before done
+                  // This shouldn't happen, but handle it
+                  headersSent = true;
+                  res.writeHead(200, {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    'Connection': 'keep-alive',
+                    'X-Provider': providerName,
+                  });
+                }
+                // Send final [DONE] marker
+                res.write('data: [DONE]\n\n');
+                res.end();
+              } else if (chunk) {
+                if (!headersSent) {
+                  // First successful chunk - send headers now
+                  headersSent = true;
+                  res.writeHead(200, {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    'Connection': 'keep-alive',
+                    'X-Provider': providerName,
+                  });
+                  // Flush any buffered chunks
+                  for (const buffered of chunkBuffer) {
+                    res.write(buffered);
+                  }
+                  chunkBuffer.length = 0;
+                }
+                res.write(chunk);
+              }
+            };
+            
+            try {
+              await handleChatCompletions(requestBody, onChunk);
+            } catch (err) {
+              console.log(`[Proxy] Streaming error: ${err.message}`);
+              res.write(`data: {"error": "${err.message}"}\n\n`);
+              res.end();
+            }
+          } else {
+            // NON-STREAMING MODE
+            const result = await handleChatCompletions(requestBody);
+            
+            const headers = {
+              'Content-Type': 'application/json',
+              'X-Provider': result.provider,
+            };
+            
+            if (result.limits) {
+              headers['X-Model-Limit-Context'] = String(result.limits.context);
+              headers['X-Model-Limit-Output'] = String(result.limits.output);
+            }
+            
+            res.writeHead(result.status, headers);
+            res.end(result.body);
+          }
         } catch (err) {
           res.writeHead(503, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
@@ -412,21 +799,25 @@ function createServer() {
       return;
     }
     
-    // Models list
+    // Models list - expose tier aliases only
     if (parsedUrl.pathname === '/v1/models' && req.method === 'GET') {
-      const config = loadConfig();
-      const providers = getPrioritizedProviders(config);
+      const tiers = [
+        { id: 'tier-splus', name: 'S+ Tier (Elite)', desc: '70%+ SWE-bench - Best for complex refactors' },
+        { id: 'tier-s', name: 'S Tier (Excellent)', desc: '60-70% SWE-bench - Reliable for most tasks' },
+        { id: 'tier-aplus', name: 'A+ Tier (Very Capable)', desc: '50-60% SWE-bench - Great alternatives' },
+        { id: 'tier-a', name: 'A Tier (Solid)', desc: '40-50% SWE-bench - Good general use' },
+        { id: 'tier-aminus', name: 'A- Tier (Decent)', desc: '35-40% SWE-bench - Simpler tasks' },
+        { id: 'tier-bplus', name: 'B+ Tier (Capable)', desc: '30-35% SWE-bench - Small tasks' },
+        { id: 'tier-b', name: 'B Tier (Entry)', desc: '20-30% SWE-bench - Default fallback' },
+        { id: 'tier-c', name: 'C Tier (Basic)', desc: '<20% SWE-bench - Last resort' },
+      ];
       
-      const models = [];
-      for (const provider of providers) {
-        for (const modelId of provider.models.slice(0, 5)) {
-          models.push({
-            id: `${provider.key}/${modelId}`,
-            object: 'model',
-            owned_by: provider.key,
-          });
-        }
-      }
+      const models = tiers.map(t => ({
+        id: t.id,
+        object: 'model',
+        owned_by: 'free-llm-api-provider',
+        created: 1700000000,
+      }));
       
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
