@@ -317,6 +317,10 @@ MIT — Use freely, modify freely, no warranty.
 
 ## Star History
 
-<a href="https://star-history.com/#alexjm19/free-llm-api-provider">
-  <img src="https://api.star-history.com/svg?repos=alexjm19/free-llm-api-provider&type=Date" alt="Star History">
+<a href="https://www.star-history.com/?repos=alexjm19%2Ffree-llm-api-provider">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=alexjm19/free-llm-api-provider&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=alexjm19/free-llm-api-provider&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=alexjm19/free-llm-api-provider&type=date&legend=top-left" />
+ </picture>
 </a>
