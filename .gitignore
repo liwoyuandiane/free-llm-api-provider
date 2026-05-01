@@ -1,0 +1,44 @@
+# Environment
+.env
+.env*
+
+# Node
+node_modules/
+
+# Python (excluded - for Docker build only)
+router/
+scripts/
+*.py
+setup.py
+requirements.txt
+
+# Tests (excluded - development only)
+test/
+test_logs/
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Internal prompt files
+*-prompt.md
+
+# Docker and generated configs
+docker-compose.yml
+litellm_proxy.yaml
+
+# Config files (keys stored in home directory, not here)
+*.json
+config.json
+.free-llm-api-provider*
+
+# Test artifacts
+test_logs/
+test_generate.js
