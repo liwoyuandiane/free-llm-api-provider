@@ -1,16 +1,14 @@
 # free-llm-api-provider
 
 <p align="center">
-  <!-- npm badges - uncomment after publishing:
   <a href="https://www.npmjs.com/package/free-llm-api-provider">
     <img src="https://img.shields.io/npm/v/free-llm-api-provider.svg" alt="npm version">
   </a>
   <a href="https://www.npmjs.com/package/free-llm-api-provider">
     <img src="https://img.shields.io/npm/dw/free-llm-api-provider.svg" alt="npm downloads">
   </a>
-  -->
   <a href="https://github.com/alexjm19/free-llm-api-provider/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/alexjm19/free-llm-api-provider.svg" alt="MIT License">
+    <img src="https://img.shields.io/npm/l/free-llm-api-provider.svg" alt="MIT License">
   </a>
 </p>
 
