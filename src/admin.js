@@ -96,11 +96,12 @@ const MAX_BODY_SIZE = 1024 * 512; // 512KB
 function readJsonBody(req) {
   return new Promise(resolve => {
     let body = '';
-    req.on('data', chunk => { body += chunk; if (body.length > MAX_BODY_SIZE) { req.destroy(); resolve({}); } });
-    req.on('end', () => {
-      try { resolve(JSON.parse(body)); }
-      catch { resolve({}); }
-    });
+    let resolved = false;
+    const done = v => { if (!resolved) { resolved = true; resolve(v); } };
+    req.on('data', chunk => { body += chunk; if (body.length > MAX_BODY_SIZE) { req.destroy(); done({}); } });
+    req.on('end', () => { try { done(JSON.parse(body)); } catch { done({}); } });
+    req.on('error', () => done({}));
+    req.on('close', () => done({}));
   });
 }
 
@@ -607,6 +608,8 @@ async function api(p,o={}) {
 }
 function t(m,tp='succ'){const e=document.getElementById('toast');e.textContent=m;e.className='toast show '+tp;clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('show'),3000);}
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+// Escape for JavaScript single-quoted string context (inline event handlers)
+function jsesc(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");}
 function copyKey(){const k=document.getElementById('serverKey').textContent;navigator.clipboard.writeText(k).then(()=>t('Key 已复制'));}
 function logout(){fetch('/api/admin/logout',{method:'POST'}).then(()=>window.location.href='/admin/login').catch(()=>window.location.href='/admin/login');}
 
@@ -639,13 +642,13 @@ async function rP() {
       return '<div class="row">' +
         '<div class="pi">' +
           '<div class="pi-top">' +
-            '<label class="tog"><input type="checkbox" ' + (en ? 'checked' : '') + ' onchange="togP(\\'' + p.key + '\\',this.checked)"><span class="sl"></span></label>' +
+            '<label class="tog"><input type="checkbox" ' + (en ? 'checked' : '') + ' onchange="togP(\\'' + jsesc(p.key) + '\\',this.checked)"><span class="sl"></span></label>' +
             '<span class="pn">' + esc(p.name) + '</span>' +
             '<span class="dot ' + st + '"></span>' +
             '<span class="pi-count">' + keyCount + ' 个密钥</span>' +
             '<div class="pi-actions">' +
-              '<button class="btn btn-sm" onclick="tP(\\'' + p.key + '\\')">测试</button>' +
-              '<button class="btn btn-sm" onclick="dP(\\'' + p.key + '\\')">发现模型</button>' +
+              '<button class="btn btn-sm" onclick="tP(\\'' + jsesc(p.key) + '\\')">测试</button>' +
+              '<button class="btn btn-sm" onclick="dP(\\'' + jsesc(p.key) + '\\')">发现模型</button>' +
             '</div>' +
           '</div>' +
           '<div class="kl">' +
@@ -658,12 +661,12 @@ async function rP() {
               return '<div class="ke">' +
                 '<span class="dot" style="background:' + dotColor + ';width:8px;height:8px;border-radius:50%;flex-shrink:0"></span>' +
                 '<span class="kid">' + esc(shortKey) + '</span>' +
-                '<span class="kn' + (!nt ? ' kn-empty' : '') + '" onclick="edn(this,\\'' + esc(p.key) + '\\',\\'' + esc(ks2) + '\\')">' + (esc(nt) || '添加备注...') + '</span>' +
+                '<span class="kn' + (!nt ? ' kn-empty' : '') + '" onclick="edn(this,\\'' + jsesc(p.key) + '\\',\\'' + jsesc(ks2) + '\\')">' + (esc(nt) || '添加备注...') + '</span>' +
                 '<span class="kt">' + stText + '</span>' +
                 '<span class="ka">' +
-                  '<button class="ka-edit" onclick="edn(this.closest(\'.ke\').querySelector(\'.kn\'),\\'' + esc(p.key) + '\\',\\'' + esc(ks2) + '\\')">✏️</button>' +
-                  '<button onclick="tsk(\\'' + esc(p.key) + '\\',\\'' + esc(ks2) + '\\')">检查</button>' +
-                  '<button class="ka-del" onclick="dk(\\'' + esc(p.key) + '\\',\\'' + esc(ks2) + '\\')">移除</button>' +
+                  '<button class="ka-edit" onclick="edn(this.closest(\'.ke\').querySelector(\'.kn\'),\\'' + jsesc(p.key) + '\\',\\'' + jsesc(ks2) + '\\')">✏️</button>' +
+                  '<button onclick="tsk(\\'' + jsesc(p.key) + '\\',\\'' + jsesc(ks2) + '\\')">检查</button>' +
+                  '<button class="ka-del" onclick="dk(\\'' + jsesc(p.key) + '\\',\\'' + jsesc(ks2) + '\\')">移除</button>' +
                 '</span></div>';
             }).join('')) +
           '</div>' +
@@ -748,7 +751,7 @@ async function rM(){
   const ie=m=>ms[gk(m)]!==false,gt=m=>mt[gk(m)]||m.tier||m[2]||'';
   const all=[...sm.map(m=>({id:m[0],name:m[1],tier:m[2],provider:m[5],source:'静态'})),...disc.map(m=>({id:m.id,name:m.id,tier:'discovered',provider:m.provider,source:'发现'}))];
   document.getElementById('mc').textContent='共 '+all.length+' 个';
-  document.getElementById('mtb').innerHTML=all.map(m=>{const t=gt(m),en=ie(m),p=m.provider||m[5]||'';return '<tr><td><label class="tog"><input type="checkbox" '+(en?'checked':'')+' onchange="tM(\\''+esc(m.id||m[0])+'\\',\\''+esc(p)+'\\',this.checked)"><span class="sl"></span></label></td><td style="font-family:monospace;font-size:10.5px">'+esc(m.id||m[0])+'</td><td>'+esc(m.name||m[1])+'</td><td><select class="ts" onchange="sT(\\''+esc(m.id||m[0])+'\\',\\''+esc(p)+'\\',this.value)">'+TIERS.map(t2=>'<option value="'+t2+'" '+(t===t2?'selected':'')+'>'+t2+'</option>').join('')+'</select></td><td>'+esc(p)+'</td><td style="color:var(--dim)">'+m.source+'</td></tr>';}).join('');
+  document.getElementById('mtb').innerHTML=all.map(m=>{const t=gt(m),en=ie(m),p=m.provider||m[5]||'';return '<tr><td><label class="tog"><input type="checkbox" '+(en?'checked':'')+' onchange="tM(\\''+jsesc(m.id||m[0])+'\\',\\''+jsesc(p)+'\\',this.checked)"><span class="sl"></span></label></td><td style="font-family:monospace;font-size:10.5px">'+esc(m.id||m[0])+'</td><td>'+esc(m.name||m[1])+'</td><td><select class="ts" onchange="sT(\\''+jsesc(m.id||m[0])+'\\',\\''+jsesc(p)+'\\',this.value)">'+TIERS.map(t2=>'<option value="'+t2+'" '+(t===t2?'selected':'')+'>'+t2+'</option>').join('')+'</select></td><td>'+esc(p)+'</td><td style="color:var(--dim)">'+m.source+'</td></tr>';}).join('');
 }
 async function tM(mid,prov,en){await api('/model-state',{method:'POST',body:{modelId:mid,provider:prov,enabled:en}});}
 async function sT(mid,prov,t){await api('/model-tier',{method:'POST',body:{modelId:mid,provider:prov,tier:t}});}
@@ -821,8 +824,8 @@ async function rCP(){
   const d=await api('/custom-provider'),el=document.getElementById('cpList'),pr=d.providers||[];
   if(!pr.length){el.innerHTML='<p class="empty">暂无自定义提供商</p>';return;}
   el.innerHTML=pr.map(p=>{
-    const ms=p.models.map(m=>'<span class="kt" style="cursor:pointer" onclick="tM(\\''+esc(m.modelId)+'\\',\\''+esc(p.name)+'\\','+(!m.enabled)+');rCP()">'+esc(m.modelId)+(m.enabled?'':' ✕')+'</span>').join(' ');
-    return '<div class="row"><label class="tog"><input type="checkbox" '+(p.enabled?'checked':'')+' onchange="tc(\\''+esc(p.name)+'\\',this.checked)"><span class="sl"></span></label><div class="pi"><span class="pn">'+esc(p.name)+'</span><span class="kt">'+esc(p.base_url)+'</span></div><div style="margin:4px 0;width:100%">'+ms+'</div><button class="btn btn-sm btn-d" onclick="dc(\\''+esc(p.name)+'\\')">删除</button></div>';
+    const ms=p.models.map(m=>'<span class="kt" style="cursor:pointer" onclick="tM(\\''+jsesc(m.modelId)+'\\',\\''+jsesc(p.name)+'\\','+(!m.enabled)+');rCP()">'+esc(m.modelId)+(m.enabled?'':' ✕')+'</span>').join(' ');
+    return '<div class="row"><label class="tog"><input type="checkbox" '+(p.enabled?'checked':'')+' onchange="tc(\\''+jsesc(p.name)+'\\',this.checked)"><span class="sl"></span></label><div class="pi"><span class="pn">'+esc(p.name)+'</span><span class="kt">'+esc(p.base_url)+'</span></div><div style="margin:4px 0;width:100%">'+ms+'</div><button class="btn btn-sm btn-d" onclick="dc(\\''+jsesc(p.name)+'\\')">删除</button></div>';
   }).join('');
 }
 async function aCP(){const n=document.getElementById('cpN').value.trim(),u=document.getElementById('cpU').value.trim(),k=document.getElementById('cpK').value.trim();if(!n||!u){t('请填写名称和URL','err');return;}await api('/custom-provider',{method:'POST',body:{name:n,baseUrl:u,apiKey:k}});document.getElementById('cpN').value='';document.getElementById('cpU').value='';document.getElementById('cpK').value='';t('已添加');rCP();rP();}
@@ -1351,10 +1354,12 @@ function parseFormBody(req) {
 function parseJsonBody(req) {
   return new Promise(resolve => {
     let body = '';
-    req.on('data', chunk => { body += chunk; if (body.length > MAX_BODY_SIZE) { req.destroy(); resolve({}); } });
-    req.on('end', () => {
-      try { resolve(JSON.parse(body)); } catch { resolve({}); }
-    });
+    let resolved = false;
+    const done = v => { if (!resolved) { resolved = true; resolve(v); } };
+    req.on('data', chunk => { body += chunk; if (body.length > MAX_BODY_SIZE) { req.destroy(); done({}); } });
+    req.on('end', () => { try { done(JSON.parse(body)); } catch { done({}); } });
+    req.on('error', () => done({}));
+    req.on('close', () => done({}));
   });
 }
 
@@ -1379,8 +1384,7 @@ function requireAuthApi(req, res) {
   if (auth.startsWith('Bearer ')) {
     const token = auth.slice(7).trim();
     try {
-      const { getServerApiKey: dbKey } = require('./db');
-      const key = dbKey();
+      const key = dbGetServerApiKey();
       if (key && token === key) return { username: 'admin', auth: 'apikey' };
     } catch {}
   }
