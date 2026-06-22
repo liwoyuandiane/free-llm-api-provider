@@ -7,7 +7,7 @@
 const { loadConfig, saveConfig, addApiKey, removeApiKey, getAllApiKeys, getServerApiKey } = require('./config');
 const { sources, MODELS, getModelsByProvider } = require('./models');
 const { runHealthCheck, getHealthyProviders } = require('./health-checker');
-const { verifyAdminLogin, createSession, validateSession, deleteSession, getDiscoveredModels: dbGetDiscoveredModels, saveDiscoveredModels, getAllProviderKeys, addProviderKey, updateProviderKeyNotes, removeProviderKey, removeAllProviderKeys, setProviderEnabled, isProviderEnabled, regenerateServerApiKey, setModelEnabled, getAllModelStates, getCustomProviders, saveCustomProvider, deleteCustomProvider, setCustomProviderEnabled, getCustomProviderModels, saveCustomProviderModel, deleteCustomProviderModel, changeAdminPassword, getProviderTestModel, setProviderTestModel, setModelTier, getAllModelTiers, getServerApiKey: dbGetServerApiKey } = require('./db');
+const { verifyAdminLogin, createSession, validateSession, deleteSession, getDiscoveredModels: dbGetDiscoveredModels, saveDiscoveredModels, getAllProviderKeys, addProviderKey, updateProviderKeyNotes, removeProviderKey, removeAllProviderKeys, setProviderEnabled, isProviderEnabled, regenerateServerApiKey, setModelEnabled, getAllModelStates, getCustomProviders, saveCustomProvider, deleteCustomProvider, setCustomProviderEnabled, getCustomProviderModels, saveCustomProviderModel, deleteCustomProviderModel, changeAdminPassword, changeAdminUsername, getAdminUsername, getProviderTestModel, setProviderTestModel, setModelTier, getAllModelTiers, getServerApiKey: dbGetServerApiKey } = require('./db');
 
 function getAdminInitialData() {
   const config = loadConfig();
@@ -30,7 +30,8 @@ function getAdminInitialData() {
   for (const [k] of Object.entries(sources)) {
     try { const tm = getProviderTestModel(k); if (tm) testModels[k] = tm; } catch {}
   }
-  return { serverApiKey, allProviders, enabledProviders, apiKeys, testModels };
+  const adminUsername = getAdminUsername();
+  return { serverApiKey, allProviders, enabledProviders, apiKeys, testModels, adminUsername };
 }
 
 // ============================================================================
@@ -511,6 +512,12 @@ function getAdminHtml() {
         <div class="fr"><label>新密码</label><input type="password" id="newPw" placeholder="至少6位" style="flex:1"></div>
         <button class="btn btn-p" onclick="cPw()">修改</button>
       </div>
+      <div class="c">
+        <div class="ct" style="margin-bottom:4px">修改用户名</div>
+        <p style="font-size:12px;color:var(--dim);margin-bottom:10px">当前用户名: <span id="curUser" style="font-weight:600"></span></p>
+        <div class="fr"><label>新用户名</label><input type="text" id="newUser" placeholder="新用户名" style="flex:1"></div>
+        <button class="btn btn-p" onclick="cU()">修改</button>
+      </div>
     </div>
 
   </main>
@@ -571,6 +578,8 @@ function logout(){fetch('/api/admin/logout',{method:'POST'}).then(()=>window.loc
 
 async function loadSK(){
   document.getElementById('serverKey').textContent = initData.serverApiKey || 'sk-free-llm-api-provider';
+  const userEl = document.getElementById('curUser');
+  if (userEl) userEl.textContent = initData.adminUsername || 'admin';
 }
 
 // Providers
@@ -732,6 +741,7 @@ async function dc(n){await api('/custom-provider',{method:'DELETE',body:{name:n}
 // Settings
 async function rK(){if(!confirm('确定重新生成 API Key？'))return;const r=await api('/key/regenerate',{method:'POST'});if(r.key){document.getElementById('serverKey').textContent=r.key;t('新 Key: '+r.key.slice(0,12)+'...');}}
 async function cPw(){const c=document.getElementById('curPw').value,p=document.getElementById('newPw').value;if(!c||!p){t('请填写所有字段','err');return;}if(p.length<6){t('至少6位','err');return;}const r=await api('/change-password',{method:'POST',body:{currentPassword:c,newPassword:p}});if(r.success){document.getElementById('curPw').value='';document.getElementById('newPw').value='';t('密码已修改');}else{t(r.error||'修改失败','err');}}
+async function cU(){const n=document.getElementById('newUser').value;if(!n){t('请输入新用户名','err');return;}if(n.length<2){t('用户名至少2位','err');return;}const r=await api('/change-username',{method:'POST',body:{newUsername:n}});if(r.success){document.getElementById('curUser').textContent=n;document.getElementById('newUser').value='';t('用户名已修改');}else{t(r.error||'修改失败','err');}}
 
 // Init
 loadSK().then(()=>{rP();rCP();}).catch(()=>{setTimeout(()=>{rP();rCP();},2000);});
@@ -749,7 +759,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')cDM();});
 // Auth helpers
 // ============================================================================
 
-function parseCookiesc(req) {
+function parseCookies(req) {
   const cookieHeader = req.headers.cookie || '';
   const cookies = {};
   for (const part of cookieHeader.split(';')) {
@@ -775,7 +785,7 @@ function clearSessionCookie(res) {
  * Returns the session object if valid, null otherwise.
  */
 function checkAuth(req) {
-  const cookies = parseCookiesc(req);
+  const cookies = parseCookies(req);
   const token = cookies.flap_session;
   if (!token) return null;
   try {
@@ -929,12 +939,28 @@ async function handleChangePassword(req, res) {
   if (!currentPassword || !newPassword) return jsonResponse(res, 400, { error: 'Missing password fields' });
   if (newPassword.length < 6) return jsonResponse(res, 400, { error: '密码至少6位' });
 
-  // Verify current password
-  const user = verifyAdminLogin('admin', currentPassword);
+  const username = (req._session && req._session.username) || 'admin';
+
+  const user = verifyAdminLogin(username, currentPassword);
   if (!user) return jsonResponse(res, 403, { error: '当前密码错误' });
 
-  changeAdminPassword('admin', newPassword);
+  changeAdminPassword(username, newPassword);
   jsonResponse(res, 200, { success: true, message: '密码已修改' });
+}
+
+// Username change
+async function handleChangeUsername(req, res) {
+  const body = await readJsonBody(req);
+  const { newUsername } = body;
+  if (!newUsername) return jsonResponse(res, 400, { error: 'Missing username' });
+  if (newUsername.length < 2) return jsonResponse(res, 400, { error: '用户名至少2位' });
+
+  const oldUsername = (req._session && req._session.username) || 'admin';
+
+  const ok = changeAdminUsername(oldUsername, newUsername);
+  if (!ok) return jsonResponse(res, 400, { error: '用户名已存在' });
+
+  jsonResponse(res, 200, { success: true, message: '用户名已修改' });
 }
 
 // ============================================================================
@@ -988,7 +1014,7 @@ async function handleGetConfig(res) {
   let modelStates = {};
   let customProviders = [];
   let modelTiers = {};
-  try { modelStates = getAllModelStatesc(); } catch {}
+  try { modelStates = getAllModelStates(); } catch {}
   try { customProviders = getCustomProviders(); } catch {}
   try { modelTiers = getAllModelTiers(); } catch {}
 
@@ -1000,6 +1026,7 @@ async function handleGetConfig(res) {
 
   jsonResponse(res, 200, {
     serverApiKey: getServerApiKey(config),
+    adminUsername: getAdminUsername(),
     apiKeys,
     enabledProviders,
     allProviders,
@@ -1063,11 +1090,11 @@ async function handleRemoveSingleProviderKey(req, res) {
   jsonResponse(res, 200, { success: true });
 }
 
-async function handleUpdateKeyNotesc(req, res) {
+async function handleUpdateKeyNotes(req, res) {
   const body = await readJsonBody(req);
   const { provider, key, notes } = body;
   if (!provider || !key) return jsonResponse(res, 400, { error: 'Missing provider or key' });
-  updateProviderKeyNotesc(provider, key, notes || '');
+  updateProviderKeyNotes(provider, key, notes || '');
   jsonResponse(res, 200, { success: true });
 }
 
@@ -1311,7 +1338,7 @@ async function handleAdminRequest(parsedUrl, req, res) {
 
   // Logout API endpoint
   if (path === '/api/admin/logout' && req.method === 'POST') {
-    const cookies = parseCookiesc(req);
+    const cookies = parseCookies(req);
     if (cookies.flap_session) {
       try { deleteSession(cookies.flap_session); } catch {}
     }
@@ -1340,6 +1367,7 @@ async function handleAdminRequest(parsedUrl, req, res) {
   // Require auth for all API endpoints (except login which is handled above)
   const session = requireAuthApi(req, res);
   if (!session) return true;
+  req._session = session;
 
   try {
     if (apiPath === '/config' && req.method === 'GET') {
@@ -1371,7 +1399,7 @@ async function handleAdminRequest(parsedUrl, req, res) {
       return true;
     }
     if (apiPath === '/provider-key/notes' && req.method === 'POST') {
-      await handleUpdateKeyNotesc(req, res);
+      await handleUpdateKeyNotes(req, res);
       return true;
     }
     if (apiPath === '/provider-key/test' && req.method === 'POST') {
@@ -1426,6 +1454,12 @@ async function handleAdminRequest(parsedUrl, req, res) {
     // Password change
     if (apiPath === '/change-password' && req.method === 'POST') {
       await handleChangePassword(req, res);
+      return true;
+    }
+
+    // Username change
+    if (apiPath === '/change-username' && req.method === 'POST') {
+      await handleChangeUsername(req, res);
       return true;
     }
 

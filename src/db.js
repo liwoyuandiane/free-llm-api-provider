@@ -605,12 +605,24 @@ function deleteCustomProviderModel(providerName, modelId) {
 }
 
 // ============================================================================
-// Password change
+// Password & Username change
 // ============================================================================
 function changeAdminPassword(username, newPassword) {
   const hash = hashPassword(newPassword);
   db.prepare('UPDATE admin_users SET password_hash = ? WHERE username = ?').run(hash, username);
   return true;
+}
+
+function changeAdminUsername(oldUsername, newUsername) {
+  const existing = db.prepare('SELECT id FROM admin_users WHERE username = ?').get(newUsername);
+  if (existing) return false; // 用户名已存在
+  db.prepare('UPDATE admin_users SET username = ? WHERE username = ?').run(newUsername, oldUsername);
+  return true;
+}
+
+function getAdminUsername() {
+  const row = db.prepare('SELECT username FROM admin_users LIMIT 1').get();
+  return row ? row.username : 'admin';
 }
 
 // ============================================================================
@@ -799,6 +811,8 @@ module.exports = {
   saveCustomProviderModel,
   deleteCustomProviderModel,
   changeAdminPassword,
+  changeAdminUsername,
+  getAdminUsername,
   getProviderTestModel,
   setProviderTestModel,
   setModelTier,
