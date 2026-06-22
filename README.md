@@ -30,12 +30,14 @@ Free AI APIs break — rate limits, downtime, capacity issues. Your coding assis
 - **Multi-key support**: Add multiple keys for the same provider, tries them all before failing over
 - **238 models** across 25 providers (NVIDIA, Groq, OpenRouter, Cerebras, etc.)
 - **Tier-based routing**: `tier-splus` (elite) → `tier-b` (default), with health scores overriding tiers
+- **Web Admin UI**: Browser-based management at `http://localhost:4002/admin` — manage providers, API keys, discover models
 - **Real-time status dashboard**: `--status` shows live provider health, latency, and quota
 - **10s reliability analysis**: `--fiable` finds the most stable provider right now
+- **Auto-generated API key**: Cryptographically random key generated on first run
+- **Model auto-discovery**: Discover new models from provider `/v1/models` endpoints via the admin UI
 - **OpenAI-compatible**: Works with Cursor, VS Code, Claude Desktop, OpenCode, any client
 - **Self-contained**: Built-in config manager + model catalog + health checker. No separate tools needed.
 - **Zero dependencies**: Pure Node.js. No Python, no Docker required.
-- **Core replicated from free-coding-models**: Uses the same ping/quota/extraction logic
 
 ## Supported Providers
 
@@ -89,22 +91,24 @@ export OPENROUTER_API_KEY="your_key_here"
 - Config file: `~/.free-llm-api-provider.json` (outside project directory)
 - Or via environment variables (env vars override config file)
 
+**Server API Key**: On first run, the proxy generates a cryptographically random API key (`sk-<64 hex chars>`) and stores it in the config file. This key is used by AI clients to connect to the proxy. Override with `FLAP_API_KEY` environment variable.
+
 ### 3. Start Proxy
 
 ```bash
 free-llm-api-provider
 ```
 
-Proxy runs at `http://localhost:4000`.
+Proxy runs at `http://localhost:4002`.
 
 ### 4. Configure Your AI Client
 
 | Client | Base URL | API Key |
 |--------|----------|---------|
-| Cursor | `http://localhost:4000/v1` | `sk-free-llm-api-provider` |
-| VS Code | `http://localhost:4000/v1` | `sk-free-llm-api-provider` |
-| Claude Desktop | `http://localhost:4000/v1` | `sk-free-llm-api-provider` |
-| OpenCode | `http://localhost:4000/v1` | `sk-free-llm-api-provider` |
+| Cursor | `http://localhost:4002/v1` | `sk-free-llm-api-provider` |
+| VS Code | `http://localhost:4002/v1` | `sk-free-llm-api-provider` |
+| Claude Desktop | `http://localhost:4002/v1` | `sk-free-llm-api-provider` |
+| OpenCode | `http://localhost:4002/v1` | `sk-free-llm-api-provider` |
 
 ## CLI Commands
 
@@ -156,7 +160,50 @@ free-llm-api-provider logs
 # Test proxy health
 free-llm-api-provider --test
 free-llm-api-provider test
+
+# Open admin web UI URL
+free-llm-api-provider --admin
+free-llm-api-provider admin
 ```
+
+### Web Admin UI
+
+When the proxy is running, open **http://localhost:4002/admin** in your browser:
+
+- **Providers tab**: Enable/disable providers, add/remove API keys, test connections, discover models
+- **Models tab**: View the static model catalog (238 models) alongside auto-discovered models
+- **Health tab**: Real-time provider health scores, latency, and quota usage
+- **Settings tab**: Regenerate the server API key, run health checks
+
+The admin UI is served directly by the proxy — no separate server needed.
+
+### API Key
+
+On first run, the proxy automatically generates a **cryptographically random API key** (format: `sk-<64 hex chars>`). You can override it with the `FLAP_API_KEY` environment variable:
+
+```bash
+export FLAP_API_KEY="sk-your-custom-key-here"
+```
+
+The generated key is displayed when the proxy starts:
+
+```
+✅ Proxy started on http://localhost:4002
+   🌐 Admin UI:  http://localhost:4002/admin
+   🔑 API Key:   sk-d8eca3465befb4a3d623ec30fceb202c4512f03c24632268a25a09d3489713e1
+```
+
+You can also regnerate it from the admin UI (Settings tab) or via the API:
+
+```bash
+curl -X POST http://localhost:4002/api/admin/key/regenerate
+```
+
+### Model Auto-Discovery
+
+Providers that expose a `/v1/models` endpoint can have their models auto-discovered. In the admin UI, click **"发现模型"** next to any configured provider. Discovered models are added to the `/v1/models` API response and can be used directly by model ID in chat completion requests.
+
+Note: Most free AI providers do not expose a public `/v1/models` endpoint, so discovery may return empty results for many providers. The static catalog of 238 models covers the vast majority of use cases.
 
 ### Shortcuts with `flap` alias
 
@@ -182,7 +229,7 @@ flap config          # Same as free-llm-api-provider --config
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://localhost:4000/v1",
+    base_url="http://localhost:4002/v1",
     api_key="sk-free-llm-api-provider"
 )
 
@@ -196,7 +243,7 @@ print(response.choices[0].message.content)
 ### cURL
 
 ```bash
-curl http://localhost:4000/v1/chat/completions \
+curl http://localhost:4002/v1/chat/completions \
   -H "Authorization: Bearer sk-free-llm-api-provider" \
   -H "Content-Type: application/json" \
   -d '{
@@ -291,7 +338,7 @@ Stored at `~/.free-llm-api-provider.json`:
 **"No providers configured"**
 → Run `free-llm-api-provider --config`
 
-**"Port 4000 in use"**
+**"Port 4002 in use"**
 → `free-llm-api-provider --stop` then start again
 
 **"Rate limit errors"**
@@ -303,7 +350,9 @@ Stored at `~/.free-llm-api-provider.json`:
 ## Architecture
 
 - **CLI + Config**: Pure Node.js, zero runtime dependencies
+- **Web Admin UI**: Browser-based management panel served by the proxy at `/admin`
 - **Model Catalog**: 238 models with tiers, replicated from free-coding-models
+- **Auto-Discovery**: Probe provider `/v1/models` endpoints to discover new models
 - **Health Checker**: Real-time ping monitoring with quota extraction from rate limit headers (core from free-coding-models)
 - **Proxy**: Node.js HTTP proxy with health-aware routing + sticky provider + failover
 - **Multi-key**: Automatically tries all keys per provider before failover

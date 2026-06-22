@@ -345,7 +345,7 @@ const opencodeZen = [
 
 // Sources map
 const sources = {
-  nvidia: { name: 'NIM', url: 'https://integrate.api.nvidia.com/v1/chat/completions', models: nvidiaNim },
+  nvidia: { name: 'NVIDIA', url: 'https://integrate.api.nvidia.com/v1/chat/completions', models: nvidiaNim },
   groq: { name: 'Groq', url: 'https://api.groq.com/openai/v1/chat/completions', models: groq },
   cerebras: { name: 'Cerebras', url: 'https://api.cerebras.ai/v1/chat/completions', models: cerebras },
   googleai: { name: 'Google AI Studio', url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', models: googleai },
@@ -416,9 +416,24 @@ function getModelsByTier(tier) {
   return MODELS.filter(m => m[2] === tier);
 }
 
-// Helper: Get models by provider
+// Helper: Get models by provider (static + synced)
 function getModelsByProvider(providerKey) {
-  return MODELS.filter(m => m[5] === providerKey);
+  const staticModels = MODELS.filter(m => m[5] === providerKey);
+  // Also include synced models from catalog
+  try {
+    const { getSyncedModels } = require('./sync');
+    const synced = getSyncedModels(providerKey);
+    if (synced.length > 0) {
+      // Merge synced models with static, avoiding duplicates
+      const existingIds = new Set(staticModels.map(m => m[0]));
+      for (const sm of synced) {
+        if (!existingIds.has(sm[0])) {
+          staticModels.push([sm[0], sm[1], sm[2], sm[3], sm[4], providerKey]);
+        }
+      }
+    }
+  } catch {}
+  return staticModels;
 }
 
 // Helper: Get providers for a model

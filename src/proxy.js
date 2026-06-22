@@ -8,10 +8,42 @@
 const http = require('http');
 const https = require('https');
 const url = require('url');
-const { loadConfig, getEnabledProviders, getAllApiKeys } = require('./config');
+const path = require('path');
+const { loadConfig, getEnabledProviders, getAllApiKeys, getServerApiKey } = require('./config');
 const { sources, getModelsByProvider, ENV_VAR_NAMES, getModelLimits } = require('./models');
 
 // Token estimation (rough: ~4 chars per token for English, ~2 for CJK)
+function isStreaming(body) {
+  return body.stream === true || body.stream === 'true' || body.stream === 1;
+}
+
+// Extract session ID from request for sticky sessions
+function getSessionId(reqBody) {
+  // Use X-Session-Id or hash of first user message
+  if (reqBody.session_id) return reqBody.session_id;
+  if (reqBody.messages && reqBody.messages.length > 0) {
+    const first = reqBody.messages[0].content || '';
+    const str = String(first).substring(0, 200);
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) { hash = ((hash << 5) - hash) + str.charCodeAt(i); hash |= 0; }
+    return 's' + Math.abs(hash).toString(36);
+  }
+  return null;
+}
+
+// Check if request contains vision/image input
+function hasVisionInput(reqBody) {
+  if (!reqBody.messages) return false;
+  for (const msg of reqBody.messages) {
+    if (Array.isArray(msg.content)) {
+      for (const part of msg.content) {
+        if (part.type === 'image_url') return true;
+      }
+    }
+  }
+  return false;
+}
+
 function estimateTokens(messages) {
   if (!Array.isArray(messages)) return 0;
   let chars = 0;
@@ -38,10 +70,33 @@ function checkContextFit(provider, reqBody) {
   
   return { fits, tokens: estimatedTokens, limit: limits.context, model: modelId };
 }
-const { getHealthyProviders, isProviderHealthy } = require('./health-checker');
+const { getHealthyProviders } = require('./health-checker');
+const { handleAdminRequest } = require('./admin');
+const { initDatabase, getDisabledModels, getCustomProviders, getCustomProviderModels, getServerApiKey: dbGetServerApiKey, getModelsWithTier, isRateLimited, recordRateLimit, setCooldown, cleanRateLimits, getStickyProvider, setStickyProvider, isVisionModel } = require('./db');
 
-const PROXY_PORT = 4000;
-const DEFAULT_KEY = 'sk-free-llm-api-provider';
+const PROXY_PORT = 4002;
+
+// Read version from package.json
+let APP_VERSION = '1.0.0';
+try {
+  const pkg = require(path.join(__dirname, '..', 'package.json'));
+  if (pkg.version) APP_VERSION = pkg.version;
+} catch {} // fallback to default
+
+// Server API key — resolved from env var > SQLite > JSON config > legacy fallback
+function getServerKey() {
+  const envKey = process.env.FLAP_API_KEY;
+  if (envKey && envKey.startsWith('sk-')) return envKey;
+  try {
+    const dbKey = dbGetServerApiKey();
+    if (dbKey && dbKey !== 'sk-free-llm-api-provider') return dbKey;
+  } catch {}
+  try {
+    const config = loadConfig();
+    if (config.generatedApiKey) return config.generatedApiKey;
+  } catch {}
+  return 'sk-free-llm-api-provider';
+}
 
 // Request timeout per provider (ms)
 const PROVIDER_TIMEOUT = 15000;
@@ -62,12 +117,70 @@ const stats = {
 
 // Active provider tracking - stick to what works until it fails
 let activeProvider = null; // { key, apiKey, name, url, models }
-let lastProviderSuccess = new Map(); // providerKey -> timestamp of last success
+
+/**
+ * Add custom providers from SQLite to the providers list.
+ */
+function addCustomProviders(providers, config, tierPriority) {
+  try {
+    const customs = getCustomProviders();
+    for (const cp of customs) {
+      if (!cp.enabled) continue;
+
+      // Validate URL — prevent SSRF
+      let parsedUrl;
+      try { parsedUrl = new URL(cp.base_url); } catch { continue; }
+      if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') continue;
+      // Block private/reserved IP ranges when not localhost
+      const hostname = parsedUrl.hostname.toLowerCase();
+      if (hostname !== '127.0.0.1' && hostname !== 'localhost' && hostname !== '::1') {
+        // Check for private IPs
+        const isPrivate = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|169\.254\.)/.test(hostname) ||
+          hostname === 'localhost' || hostname.endsWith('.local') || hostname.endsWith('.internal');
+        if (isPrivate) continue;
+      }
+
+      const cpModels = getCustomProviderModels(cp.name);
+      if (cpModels.length === 0) continue;
+
+      const allKeys = [];
+      if (cp.api_key) allKeys.push(cp.api_key);
+      // Also check env var for custom provider
+      const envVarName = 'CUSTOM_' + cp.name.toUpperCase().replace(/[^a-zA-Z0-9]/g, '_') + '_API_KEY';
+      if (process.env[envVarName]) allKeys.push(process.env[envVarName]);
+
+      const key = 'custom_' + cp.name;
+      for (let i = 0; i < allKeys.length; i++) {
+        const enabledModels = cpModels.filter(m => m.enabled).map(m => m.model_id);
+        if (enabledModels.length === 0) continue;
+
+        providers.push({
+          key,
+          name: cp.name + ' (自定义)',
+          url: cp.base_url.endsWith('/chat/completions') ? cp.base_url : cp.base_url.replace(/\/$/, '') + '/v1/chat/completions',
+          apiKey: allKeys[i],
+          keyIndex: i,
+          totalKeys: allKeys.length,
+          envVar: envVarName,
+          priority: 98, // Custom providers are lower priority than built-in B-tier
+          healthScore: -1,
+          healthLatency: Infinity,
+          models: enabledModels,
+        });
+      }
+    }
+  } catch (err) {
+    // Silently handle db errors for custom providers
+  }
+}
 
 /**
  * Get providers ordered by health score (best first), falling back to tier priority
+ * @param {object} config - Config object
+ * @param {object} [opts] - Optional filters
+ * @param {boolean} [opts.visionOnly] - Only include providers with vision-capable models
  */
-function getPrioritizedProviders(config) {
+function getPrioritizedProviders(config, opts = {}) {
   const enabled = getEnabledProviders(config);
   const providers = [];
   
@@ -81,10 +194,44 @@ function getPrioritizedProviders(config) {
   }
   
   for (const key of enabled) {
-    const provider = sources[key];
-    if (!provider || !provider.url) continue;
+    // Check if sync has an updated URL for this provider
+    let provider = sources[key];
+    let providerUrl = provider ? provider.url : null;
+    try {
+      const { getSyncedProviderUrl } = require('./sync');
+      const syncUrl = getSyncedProviderUrl(key);
+      if (syncUrl && syncUrl.url) {
+        providerUrl = syncUrl.url;
+        // Update rate limits from sync data
+        try {
+          const { PROVIDER_LIMITS } = require('./db');
+          PROVIDER_LIMITS[key] = { rpm: syncUrl.limits_rpm || 30, rpd: syncUrl.limits_rpd || 5000 };
+        } catch {}
+      }
+    } catch {}
+    if (!providerUrl) continue;
     
-    const models = getModelsByProvider(key);
+    let models = getModelsByProvider(key);
+    // Append discovered models with manually assigned tiers
+    const tieredModels = getModelsWithTier(key);
+    for (const tm of tieredModels) {
+      if (!models.find(m => m[0] === tm.model_id)) {
+        models.push([tm.model_id, tm.model_id, tm.tier, '', '128k']);
+      }
+    }
+    // Filter out disabled models
+    const disabledIds = getDisabledModels(key);
+    if (disabledIds.length > 0) {
+      models = models.filter(m => !disabledIds.includes(m[0]));
+    }
+    if (models.length === 0) continue;
+
+    // Vision filter: only include providers with vision-capable models
+    if (opts.visionOnly) {
+      const hasVision = models.some(m => isVisionModel(m[0]));
+      if (!hasVision) continue;
+    }
+    
     const bestTier = models.length > 0 ? models[0][2] : 'B';
     const tierPriorityVal = tierPriority[bestTier] || 99;
     
@@ -96,13 +243,15 @@ function getPrioritizedProviders(config) {
     // Get ALL API keys for this provider (supports multiple keys)
     const allKeys = getAllApiKeys(config, key);
     
-    // Create an entry for each key
+    // Create an entry for each key (skip rate-limited keys)
     for (let i = 0; i < allKeys.length; i++) {
+      const apiKey = allKeys[i];
+      if (isRateLimited(key, apiKey)) continue;
       providers.push({
         key,
-        name: provider.name,
-        url: provider.url,
-        apiKey: allKeys[i],
+        name: provider ? provider.name : key,
+        url: providerUrl,
+        apiKey,
         keyIndex: i,
         totalKeys: allKeys.length,
         envVar: ENV_VAR_NAMES[key],
@@ -113,7 +262,10 @@ function getPrioritizedProviders(config) {
       });
     }
   }
-  
+
+  // Add custom providers from SQLite
+  addCustomProviders(providers, config, tierPriority);
+
   // Sort by health score first (if available), then by tier priority
   providers.sort((a, b) => {
     // If both have health scores, sort by score desc, then latency asc
@@ -318,7 +470,7 @@ function forwardToProvider(provider, requestBody, onChunk = null) {
       ? provider.url 
       : provider.url.replace(/\/$/, '') + '/v1/chat/completions';
     
-    const parsedUrl = url.parse(targetUrl);
+    const parsedUrl = new URL(targetUrl);
     const isHttps = parsedUrl.protocol === 'https:';
     const client = isHttps ? https : http;
     
@@ -355,19 +507,23 @@ function forwardToProvider(provider, requestBody, onChunk = null) {
       delete body.generationConfig.maxOutputTokens;
     }
     
-    // Always set max_tokens to the model's maximum output capability
-    body.max_tokens = limits.output;
+    // Set max_tokens — respect user's value if provided and lower than limit
+    if (body.max_tokens !== undefined && body.max_tokens < limits.output) {
+      // Keep user's lower value
+    } else {
+      body.max_tokens = limits.output;
+    }
     
     const bodyStr = JSON.stringify(body);
     console.log(`[Proxy] Using model limits: context=${limits.context}, output=${limits.output} for ${selectedModelId}`);
     console.log(`[Proxy] DEBUG Forwarding body keys: ${Object.keys(body).join(', ')}`);
     
-    const isStreaming = body.stream === true;
+    const isStream = isStreaming(body);
     
     const options = {
       hostname: parsedUrl.hostname,
       port: parsedUrl.port || (isHttps ? 443 : 80),
-      path: parsedUrl.path,
+      path: parsedUrl.pathname,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -378,7 +534,7 @@ function forwardToProvider(provider, requestBody, onChunk = null) {
     };
     
     const keyInfo = provider.totalKeys > 1 ? ` [key ${provider.keyIndex + 1}/${provider.totalKeys}]` : '';
-    console.log(`[Proxy] Trying provider: ${provider.key} (${provider.name})${keyInfo} ${isStreaming ? '(streaming)' : ''}`);
+    console.log(`[Proxy] Trying provider: ${provider.key} (${provider.name})${keyInfo} ${isStream ? '(streaming)' : ''}`);
     
     const req = client.request(options, (res) => {
       // Check for error status even in streaming mode
@@ -394,7 +550,7 @@ function forwardToProvider(provider, requestBody, onChunk = null) {
       }
       
       // STREAMING MODE: forward chunks directly
-      if (isStreaming && onChunk) {
+      if (isStream && onChunk) {
         console.log(`[Proxy] ✅ ${provider.key} streaming started (${res.statusCode})`);
         recordSuccess(provider.key);
         
@@ -523,65 +679,88 @@ function forwardToProvider(provider, requestBody, onChunk = null) {
 
 /**
  * Handle chat completions with failover
- * Strategy: Stick to the active provider until it fails, then failover
+ * Strategy: Sticky sessions + rate-aware routing + vision detection
  */
 async function handleChatCompletions(reqBody, onStreamChunk = null) {
-  const isStreaming = reqBody.stream === true;
+  const isStream = isStreaming(reqBody);
   const config = loadConfig();
-  const providers = getPrioritizedProviders(config);
+  
+  // Detect vision requests and filter providers
+  const visionOnly = hasVisionInput(reqBody);
+  const providers = getPrioritizedProviders(config, { visionOnly });
   
   if (providers.length === 0) {
-    throw new Error('No providers configured');
+    throw new Error(visionOnly ? 'No vision-capable providers available' : 'No providers configured');
   }
   
-  const errors = [];
+  // Clean up old rate limit data periodically
+  cleanRateLimits();
   
-  // First, try the active provider if we have one and it's still valid
-  if (activeProvider && !isCircuitOpen(activeProvider.key)) {
+  const errors = [];
+  let chosenProvider = null;
+  
+  // 0. Sticky session: try the same provider as last time
+  const sessionId = getSessionId(reqBody);
+  if (sessionId) {
+    const sticky = getStickyProvider(sessionId);
+    if (sticky && !isCircuitOpen(sticky.key)) {
+      const match = providers.find(p => p.key === sticky.key && p.apiKey === sticky.apiKey);
+      if (match) {
+        const contextCheck = checkContextFit(match, reqBody);
+        if (contextCheck.fits) {
+          chosenProvider = match;
+        }
+      }
+    }
+  }
+  
+  // 1. If no sticky hit, try the active provider
+  if (!chosenProvider && activeProvider && !isCircuitOpen(activeProvider.key)) {
     const stillConfigured = providers.find(p => p.key === activeProvider.key && p.apiKey === activeProvider.apiKey);
     if (stillConfigured) {
       const contextCheck = checkContextFit(stillConfigured, reqBody);
-      if (!contextCheck.fits) {
+      if (contextCheck.fits) {
+        chosenProvider = stillConfigured;
+      } else {
         console.log(`[Proxy] ⚠️ Active provider ${activeProvider.key} model ${contextCheck.model} context too small (${contextCheck.tokens} > ${contextCheck.limit}), skipping...`);
         errors.push({ provider: activeProvider.key, error: `Context too small: ${contextCheck.tokens} > ${contextCheck.limit}` });
         activeProvider = null;
-      } else {
-        try {
-          console.log(`[Proxy] Using active provider: ${activeProvider.key} (${contextCheck.tokens} tokens / ${contextCheck.limit} limit)`);
-          const result = await forwardToProvider(stillConfigured, reqBody, onStreamChunk);
-          
-          if (result.streaming) {
-            return result;
-          }
-          
-          stats.totalRequests++;
-          stats.successfulRequests++;
-          stats.providerUsage.set(activeProvider.key, (stats.providerUsage.get(activeProvider.key) || 0) + 1);
-          lastProviderSuccess.set(activeProvider.key, Date.now());
-          
-          try {
-            const responseObj = JSON.parse(result.body);
-            if (responseObj.model) {
-              responseObj.model = `${activeProvider.key}/${responseObj.model}`;
-            }
-            const limits = getModelLimits(responseObj.model?.replace(activeProvider.key + '/', '') || stillConfigured.models[0]);
-            return { status: result.status, body: JSON.stringify(responseObj), provider: activeProvider.key, limits };
-          } catch {
-            return { ...result, limits: getModelLimits(stillConfigured.models[0]) };
-          }
-        } catch (err) {
-          console.log(`[Proxy] Active provider ${activeProvider.key} failed, initiating failover...`);
-          errors.push({ provider: activeProvider.key, error: err.error || err.message });
-          stats.providerUsage.set(activeProvider.key, (stats.providerUsage.get(activeProvider.key) || 0) + 1);
-          activeProvider = null;
-        }
       }
     } else {
       activeProvider = null;
     }
   }
   
-  // Failover: try providers in priority order
+  // 2. If chosen from sticky/active, try it first
+  if (chosenProvider) {
+    try {
+      console.log(`[Proxy] Using ${sessionId ? 'sticky' : 'active'} provider: ${chosenProvider.key}`);
+      const result = await forwardToProvider(chosenProvider, reqBody, onStreamChunk);
+      if (result.streaming) return result;
+      
+      stats.totalRequests++; stats.successfulRequests++;
+      stats.providerUsage.set(chosenProvider.key, (stats.providerUsage.get(chosenProvider.key) || 0) + 1);
+      recordRateLimit(chosenProvider.key, chosenProvider.apiKey);
+      if (sessionId) setStickyProvider(sessionId, chosenProvider);
+      
+      try {
+        const responseObj = JSON.parse(result.body);
+        if (responseObj.model) responseObj.model = `${chosenProvider.key}/${responseObj.model}`;
+        const limits = getModelLimits(responseObj.model?.replace(chosenProvider.key + '/', '') || chosenProvider.models[0]);
+        return { status: result.status, body: JSON.stringify(responseObj), provider: chosenProvider.key, limits };
+      } catch {
+        return { ...result, limits: getModelLimits(chosenProvider.models[0]) };
+      }
+    } catch (err) {
+      console.log(`[Proxy] ${sessionId ? 'Sticky' : 'Active'} provider ${chosenProvider.key} failed, failover...`);
+      errors.push({ provider: chosenProvider.key, error: err.error || err.message });
+      if (err.status === 429) setCooldown(chosenProvider.key, chosenProvider.apiKey, 60000);
+      stats.providerUsage.set(chosenProvider.key, (stats.providerUsage.get(chosenProvider.key) || 0) + 1);
+      if (!sessionId) activeProvider = null;
+    }
+  }
+  
+  // 3. Failover: try providers in priority order
   for (const provider of providers) {
     if (isCircuitOpen(provider.key)) {
       errors.push({ provider: provider.key, error: 'Circuit breaker open' });
@@ -599,29 +778,19 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
       console.log(`[Proxy] Trying provider: ${provider.key} (${contextCheck.tokens} tokens / ${contextCheck.limit} limit)`);
       const result = await forwardToProvider(provider, reqBody, onStreamChunk);
       
-      if (result.streaming) {
-        return result;
-      }
+      if (result.streaming) return result;
       
-      stats.totalRequests++;
-      stats.successfulRequests++;
+      stats.totalRequests++; stats.successfulRequests++;
       stats.providerUsage.set(provider.key, (stats.providerUsage.get(provider.key) || 0) + 1);
+      recordRateLimit(provider.key, provider.apiKey);
       
-      activeProvider = {
-        key: provider.key,
-        apiKey: provider.apiKey,
-        name: provider.name,
-        url: provider.url,
-        models: provider.models,
-      };
-      lastProviderSuccess.set(provider.key, Date.now());
+      activeProvider = { key: provider.key, apiKey: provider.apiKey, name: provider.name, url: provider.url, models: provider.models };
+      if (sessionId) setStickyProvider(sessionId, activeProvider);
       console.log(`[Proxy] Set active provider: ${provider.key}`);
       
       try {
         const responseObj = JSON.parse(result.body);
-        if (responseObj.model) {
-          responseObj.model = `${provider.key}/${responseObj.model}`;
-        }
+        if (responseObj.model) responseObj.model = `${provider.key}/${responseObj.model}`;
         const limits = getModelLimits(responseObj.model?.replace(provider.key + '/', '') || provider.models[0]);
         return { status: result.status, body: JSON.stringify(responseObj), provider: provider.key, limits };
       } catch {
@@ -629,6 +798,7 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
       }
     } catch (err) {
       errors.push({ provider: provider.key, error: err.error || err.message });
+      if (err.status === 429) setCooldown(provider.key, provider.apiKey, 60000);
       stats.providerUsage.set(provider.key, (stats.providerUsage.get(provider.key) || 0) + 1);
     }
   }
@@ -659,17 +829,21 @@ function createServer() {
     }
     
     // Parse URL
-    const parsedUrl = url.parse(req.url, true);
+    const reqUrl = new URL(req.url, 'http://127.0.0.1');
+    const pathname = reqUrl.pathname;
+    const query = Object.fromEntries(reqUrl.searchParams);
+    // Compatible wrapper for admin handler
+    const parsedUrl = { pathname, query };
     
     // Health check
-    if (parsedUrl.pathname === '/health' && req.method === 'GET') {
+    if (pathname === '/health' && req.method === 'GET') {
       const config = loadConfig();
       const providers = getPrioritizedProviders(config);
       
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         status: 'healthy',
-        version: '1.0.0',
+        version: APP_VERSION,
         providers: providers.length,
         total_requests: stats.totalRequests,
         successful_requests: stats.successfulRequests,
@@ -685,7 +859,7 @@ function createServer() {
     }
     
     // Stats endpoint
-    if (parsedUrl.pathname === '/stats' && req.method === 'GET') {
+    if (pathname === '/stats' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         total_requests: stats.totalRequests,
@@ -698,12 +872,12 @@ function createServer() {
     }
     
     // Chat completions
-    if (parsedUrl.pathname === '/v1/chat/completions' && req.method === 'POST') {
+    if (pathname === '/v1/chat/completions' && req.method === 'POST') {
       // Validate API key
       const authHeader = req.headers.authorization || '';
       const apiKey = authHeader.replace('Bearer ', '').trim();
       
-      if (apiKey !== DEFAULT_KEY) {
+      if (apiKey !== getServerKey()) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Invalid API key' }));
         return;
@@ -715,9 +889,9 @@ function createServer() {
       req.on('end', async () => {
         try {
           const requestBody = JSON.parse(body);
-          const isStreaming = requestBody.stream === true;
+          const isStream = isStreaming(requestBody);
           
-          if (isStreaming) {
+          if (isStream) {
             // STREAMING MODE: Try providers without sending headers first
             let providerName = 'unknown';
             let headersSent = false;
@@ -767,7 +941,16 @@ function createServer() {
               await handleChatCompletions(requestBody, onChunk);
             } catch (err) {
               console.log(`[Proxy] Streaming error: ${err.message}`);
-              res.write(`data: {"error": "${err.message}"}\n\n`);
+              if (!headersSent) {
+                headersSent = true;
+                res.writeHead(200, {
+                  'Content-Type': 'text/event-stream',
+                  'Cache-Control': 'no-cache',
+                  'Connection': 'keep-alive',
+                });
+              }
+              res.write(`data: {"error": "All providers failed"}\n\n`);
+              res.write('data: [DONE]\n\n');
               res.end();
             }
           } else {
@@ -799,8 +982,11 @@ function createServer() {
       return;
     }
     
-    // Models list - expose tier aliases only
-    if (parsedUrl.pathname === '/v1/models' && req.method === 'GET') {
+    // Models list — tier aliases + discovered models
+    if (pathname === '/v1/models' && req.method === 'GET') {
+      const { getAllDiscoveredModels } = require('./admin');
+      
+      // Tier alias models
       const tiers = [
         { id: 'tier-splus', name: 'S+ Tier (Elite)', desc: '70%+ SWE-bench - Best for complex refactors' },
         { id: 'tier-s', name: 'S Tier (Excellent)', desc: '60-70% SWE-bench - Reliable for most tasks' },
@@ -812,19 +998,36 @@ function createServer() {
         { id: 'tier-c', name: 'C Tier (Basic)', desc: '<20% SWE-bench - Last resort' },
       ];
       
-      const models = tiers.map(t => ({
+      const data = tiers.map(t => ({
         id: t.id,
         object: 'model',
         owned_by: 'free-llm-api-provider',
         created: 1700000000,
       }));
+
+      // Append discovered models
+      const discovered = getAllDiscoveredModels();
+      for (const m of discovered) {
+        data.push({
+          id: m.id,
+          object: m.object || 'model',
+          owned_by: m.owned_by || m.provider || 'discovered',
+          created: Math.floor((m.discoveredAt || Date.now()) / 1000),
+        });
+      }
       
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         object: 'list',
-        data: models,
+        data,
       }));
       return;
+    }
+    
+    // Admin web UI and API
+    if (pathname.startsWith('/admin') || pathname.startsWith('/api/admin')) {
+      const handled = await handleAdminRequest(parsedUrl, req, res);
+      if (handled) return;
     }
     
     // 404
@@ -839,9 +1042,12 @@ function createServer() {
  * Start proxy server
  */
 function startProxyServer(port = PROXY_PORT) {
+  // Initialize SQLite database (creates tables, migrates data, ensures admin user)
+  try { initDatabase(); } catch (err) { console.error('[DB] Init error:', err.message); }
+  
   const server = createServer();
   
-  server.listen(port, () => {
+  server.listen(port, '0.0.0.0', () => {
     console.log(`🚀 Proxy server running on http://localhost:${port}`);
     console.log(`   Health: http://localhost:${port}/health`);
     console.log(`   API:    http://localhost:${port}/v1/chat/completions`);

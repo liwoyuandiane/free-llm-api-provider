@@ -8,6 +8,8 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
+const { getProviderKeys, addProviderKey, removeAllProviderKeys, isProviderEnabled: dbIsProviderEnabled, setProviderEnabled, getServerApiKey: dbGetServerApiKey, ensureServerApiKey: dbEnsureServerApiKey, getMeta, setMeta } = require('./db');
 
 const CONFIG_PATH = path.join(os.homedir(), '.free-llm-api-provider.json');
 const CONFIG_DIR = path.join(os.homedir(), '.config', 'free-llm-api-provider');
@@ -39,21 +41,6 @@ const ENV_VARS = {
   ovhcloud: 'OVH_AI_ENDPOINTS_ACCESS_TOKEN',
 };
 
-// Default router settings
-const DEFAULT_ROUTER_SETTINGS = Object.freeze({
-  enabled: false,
-  port: 19280,
-  activeSet: 'fast-coding',
-  probeMode: 'balanced',
-  sets: {
-    'fast-coding': {
-      name: 'fast-coding',
-      models: [],
-      created: new Date().toISOString(),
-    },
-  },
-});
-
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -62,17 +49,11 @@ function _emptyConfig() {
   return {
     apiKeys: {},
     providers: {},
-    favorites: [],
-    telemetry: {
-      enabled: null,
-      consentVersion: 0,
-      anonymousId: null,
-    },
+    generatedApiKey: null,
     settings: {
       hideUnconfiguredModels: true,
       theme: 'auto',
     },
-    router: { ...DEFAULT_ROUTER_SETTINGS },
   };
 }
 
@@ -112,20 +93,6 @@ function normalizeProvidersSection(providers) {
   return normalized;
 }
 
-function normalizeFavoriteList(favorites) {
-  if (!Array.isArray(favorites)) return [];
-  return [...new Set(favorites.filter(f => typeof f === 'string' && f.trim()).map(f => f.trim()))];
-}
-
-function normalizeTelemetrySection(telemetry) {
-  const safe = isPlainObject(telemetry) ? telemetry : {};
-  return {
-    enabled: typeof safe.enabled === 'boolean' ? safe.enabled : null,
-    consentVersion: typeof safe.consentVersion === 'number' ? safe.consentVersion : 0,
-    anonymousId: typeof safe.anonymousId === 'string' && safe.anonymousId.trim() ? safe.anonymousId : null,
-  };
-}
-
 function normalizeSettingsSection(settings) {
   const safe = isPlainObject(settings) ? settings : {};
   return {
@@ -134,26 +101,13 @@ function normalizeSettingsSection(settings) {
   };
 }
 
-function normalizeRouterConfig(router) {
-  if (!isPlainObject(router)) return { ...DEFAULT_ROUTER_SETTINGS };
-  return {
-    enabled: router.enabled === true,
-    port: typeof router.port === 'number' && router.port > 0 && router.port <= 65535 ? router.port : DEFAULT_ROUTER_SETTINGS.port,
-    activeSet: typeof router.activeSet === 'string' ? router.activeSet : DEFAULT_ROUTER_SETTINGS.activeSet,
-    probeMode: ['eco', 'balanced', 'aggressive'].includes(router.probeMode) ? router.probeMode : DEFAULT_ROUTER_SETTINGS.probeMode,
-    sets: isPlainObject(router.sets) ? router.sets : { ...DEFAULT_ROUTER_SETTINGS.sets },
-  };
-}
-
 function normalizeConfigShape(config) {
   const safe = isPlainObject(config) ? config : {};
   return {
     apiKeys: normalizeApiKeysSection(safe.apiKeys),
     providers: normalizeProvidersSection(safe.providers),
-    favorites: normalizeFavoriteList(safe.favorites),
-    telemetry: normalizeTelemetrySection(safe.telemetry),
+    generatedApiKey: typeof safe.generatedApiKey === 'string' && safe.generatedApiKey.startsWith('sk-') ? safe.generatedApiKey : null,
     settings: normalizeSettingsSection(safe.settings),
-    router: normalizeRouterConfig(safe.router),
   };
 }
 
@@ -219,15 +173,7 @@ function restoreFromBackup() {
 
 // Main config functions
 function loadConfig() {
-  if (fs.existsSync(CONFIG_PATH)) {
-    try {
-      const raw = fs.readFileSync(CONFIG_PATH, 'utf8').trim();
-      return normalizeConfigShape(JSON.parse(raw));
-    } catch {
-      return _emptyConfig();
-    }
-  }
-  return _emptyConfig();
+  return readStoredConfigSnapshot();
 }
 
 function saveConfig(config) {
@@ -281,18 +227,25 @@ function saveConfig(config) {
 }
 
 function getApiKey(config, providerKey) {
+  // 1. Check env vars (highest priority)
   const envVar = ENV_VARS[providerKey];
   const candidates = Array.isArray(envVar) ? envVar : [envVar];
   for (const candidate of candidates) {
     if (candidate && process.env[candidate]) return process.env[candidate];
   }
+
+  // 2. Check SQLite database
+  const dbKeys = getProviderKeys(providerKey);
+  if (dbKeys.length > 0) return dbKeys[0].key;
+
+  // 3. Check JSON config (legacy)
   return config?.apiKeys?.[providerKey] || null;
 }
 
 function getAllApiKeys(config, providerKey) {
   const keys = [];
-  
-  // First check env vars
+
+  // 1. Check env vars (highest priority)
   const envVar = ENV_VARS[providerKey];
   const candidates = Array.isArray(envVar) ? envVar : [envVar];
   for (const candidate of candidates) {
@@ -300,19 +253,31 @@ function getAllApiKeys(config, providerKey) {
       keys.push(process.env[candidate]);
     }
   }
-  
-  // Then check config (can be string or array)
+
+  // 2. Check SQLite database
+  const dbKeys = getProviderKeys(providerKey);
+  for (const entry of dbKeys) {
+    if (!keys.includes(entry.key)) keys.push(entry.key);
+  }
+
+  // 3. Check JSON config (legacy)
   const configKeys = config?.apiKeys?.[providerKey];
   if (typeof configKeys === 'string') {
-    keys.push(configKeys);
+    if (!keys.includes(configKeys)) keys.push(configKeys);
   } else if (Array.isArray(configKeys)) {
-    keys.push(...configKeys);
+    for (const k of configKeys) {
+      if (!keys.includes(k)) keys.push(k);
+    }
   }
-  
+
   return keys;
 }
 
 function isProviderEnabled(config, providerKey) {
+  // Check SQLite first
+  try { return dbIsProviderEnabled(providerKey); } catch {}
+
+  // Fall back to JSON config
   if (!config?.providers) return true;
   return config.providers[providerKey]?.enabled !== false;
 }
@@ -320,6 +285,11 @@ function isProviderEnabled(config, providerKey) {
 function addApiKey(config, providerKey, key) {
   const trimmed = typeof key === 'string' ? key.trim() : '';
   if (!trimmed) return false;
+
+  // Write to SQLite
+  try { addProviderKey(providerKey, trimmed); } catch {}
+
+  // Also write to JSON config for backward compatibility
   if (!config.apiKeys) config.apiKeys = {};
   const current = config.apiKeys[providerKey];
   if (!current) {
@@ -341,6 +311,10 @@ function addApiKey(config, providerKey, key) {
 }
 
 function removeApiKey(config, providerKey) {
+  // Remove from SQLite
+  try { removeAllProviderKeys(providerKey); } catch {}
+
+  // Also remove from JSON config
   if (!config.apiKeys) return false;
   const current = config.apiKeys[providerKey];
   if (!current) return false;
@@ -349,6 +323,13 @@ function removeApiKey(config, providerKey) {
 }
 
 function listApiKeys(config, providerKey) {
+  // Prefer SQLite
+  try {
+    const dbKeys = getProviderKeys(providerKey);
+    if (dbKeys.length > 0) return dbKeys;
+  } catch {}
+
+  // Fall back to JSON config
   const raw = config?.apiKeys?.[providerKey];
   if (Array.isArray(raw)) return raw.filter(k => typeof k === 'string' && k.length > 0);
   if (typeof raw === 'string' && raw.length > 0) return [raw];
@@ -365,10 +346,38 @@ function getEnabledProviders(config) {
   return enabled;
 }
 
+// ============================================================================
+// Server API Key management (delegates to SQLite)
+// ============================================================================
+
+function generateServerApiKey() {
+  const random = crypto.randomBytes(32).toString('hex');
+  return 'sk-' + random;
+}
+
+function getServerApiKey(config) {
+  // SQLite manages this now, but keep JSON config as fallback
+  try { return dbGetServerApiKey(); } catch {}
+  if (config && config.generatedApiKey) return config.generatedApiKey;
+  const envKey = process.env.FLAP_API_KEY;
+  if (envKey && envKey.startsWith('sk-')) return envKey;
+  return 'sk-free-llm-api-provider';
+}
+
+function ensureServerApiKey(config) {
+  try { return dbEnsureServerApiKey(); } catch {}
+  // Fallback to JSON config logic
+  if (process.env.FLAP_API_KEY) return process.env.FLAP_API_KEY;
+  if (config.generatedApiKey && config.generatedApiKey.startsWith('sk-')) return config.generatedApiKey;
+  const newKey = generateServerApiKey();
+  config.generatedApiKey = newKey;
+  saveConfig(config);
+  return newKey;
+}
+
 module.exports = {
   CONFIG_PATH,
   CONFIG_DIR,
-  DEFAULT_ROUTER_SETTINGS,
   ENV_VARS,
   loadConfig,
   saveConfig,
@@ -379,5 +388,7 @@ module.exports = {
   removeApiKey,
   listApiKeys,
   getEnabledProviders,
-  normalizeConfigShape,
+  generateServerApiKey,
+  getServerApiKey,
+  ensureServerApiKey,
 };

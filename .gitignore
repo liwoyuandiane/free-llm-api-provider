@@ -30,14 +30,17 @@ Thumbs.db
 # Internal prompt files
 *-prompt.md
 
-# Docker and generated configs
-docker-compose.yml
+# Docker generated configs
 litellm_proxy.yaml
 
 # Config files (keys stored in home directory, not here)
 *.json
 config.json
 .free-llm-api-provider*
+
+# Node package manifests (tracked in git)
+!package.json
+!package-lock.json
 
 # Test artifacts
 test_logs/

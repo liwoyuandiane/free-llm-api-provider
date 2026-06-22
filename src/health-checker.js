@@ -178,7 +178,8 @@ async function runHealthCheck(config) {
     
     // Check each key
     for (const key of keys) {
-      checks.push(pingProvider(providerKey, key, modelId).then(r => ({...r, modelId})));
+      const keySuffix = key.slice(-8);
+      checks.push(pingProvider(providerKey, key, modelId).then(r => ({...r, modelId, keySuffix})));
     }
   }
   
@@ -204,9 +205,11 @@ async function runHealthCheck(config) {
     
     // Update per-key stats
     for (const result of providerResults) {
-      let keyState = existing.keys.find(k => k.apiKey === result.provider + '_key');
+      const keyId = result.provider + '_' + result.keySuffix;
+      let keyState = existing.keys.find(k => k.id === keyId);
       if (!keyState) {
         keyState = {
+          id: keyId,
           apiKey: result.provider + '_key',
           latency: -1,
           status: 'unknown',

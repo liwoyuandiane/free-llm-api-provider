@@ -6,7 +6,7 @@ Self-contained Node.js CLI tool that runs a local OpenAI-compatible proxy with a
 
 **Entry point:** `src/cli.js` (also `src/proxy.js` when imported)
 **CLI aliases:** `free-llm-api-provider` and `flap`
-**Proxy URL:** `http://localhost:4000/v1/chat/completions`
+**Proxy URL:** `http://localhost:4002/v1/chat/completions`
 
 ## Critical Constraints
 
@@ -100,7 +100,7 @@ No build step. The `files` field in `package.json` controls what gets published 
 - **Groq tool calls**: Models in the Llama family often fail with 400 `tool_use_failed` when doing function calling. The proxy handles this via failover to other providers.
 - **Streaming SSE format**: Chunks must start with `data: ` and end with `\n\n`. The proxy normalizes provider responses to this format.
 - **Windows line endings**: Git may warn about LF→CRLF conversion. This is harmless.
-- **Port 4000 conflicts**: If port is in use, `flap stop` then restart.
+- **Port 4002 conflicts**: If port is in use, `flap stop` then restart.
 
 ## Environment Variables
 

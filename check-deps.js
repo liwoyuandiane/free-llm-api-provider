@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const files = ['src/cli.js', 'src/config.js', 'src/models.js', 'src/proxy.js', 'src/health-checker.js', 'src/providers.js'];
+const files = ['src/cli.js', 'src/config.js', 'src/models.js', 'src/proxy.js', 'src/health-checker.js', 'src/admin.js', 'src/db.js', 'src/sync.js'];
 const issues = [];
 
 for (const file of files) {

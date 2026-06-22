@@ -1,0 +1,21 @@
+services:
+  flap:
+    build: .
+    container_name: free-llm-api-provider
+    ports:
+      - "0.0.0.0:4002:4002"
+    volumes:
+      - flap-data:/root/.free-llm-api-provider
+      - /root/.free-llm-api-provider.json:/root/.free-llm-api-provider.json
+    environment:
+      - FLAP_API_KEY=sk-e66835d26643a81522644d779b6ae0db83092aef0a45c46d3bef7f3f4128bca8
+      - FLAP_ADMIN_PASSWORD=834a0b03cc6b1a94
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4002/health').then(r=>process.exit(r.ok?0:1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  flap-data:

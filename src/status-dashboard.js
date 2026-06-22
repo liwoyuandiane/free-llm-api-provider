@@ -6,7 +6,7 @@
  */
 
 const readline = require('readline');
-const { getHealthState, getHealthyProviders, runHealthCheck } = require('./health-checker');
+const { getHealthyProviders, runHealthCheck } = require('./health-checker');
 const { loadConfig } = require('./config');
 const { sources } = require('./models');
 
@@ -65,7 +65,6 @@ function drawLine(width) {
 }
 
 function renderDashboard() {
-  const health = getHealthState();
   const providers = getHealthyProviders();
   const config = loadConfig();
   

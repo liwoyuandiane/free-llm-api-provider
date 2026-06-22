@@ -8,7 +8,7 @@
  * Replicates free-coding-models core functionality internally.
  */
 
-const { spawn, execSync } = require('child_process');
+const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
@@ -16,28 +16,25 @@ const readline = require('readline');
 const os = require('os');
 
 // Our internal modules
-const { loadConfig, saveConfig, getApiKey, isProviderEnabled, addApiKey, getEnabledProviders } = require('./config');
+const { loadConfig, saveConfig, getApiKey, isProviderEnabled, addApiKey, getEnabledProviders, ensureServerApiKey, getServerApiKey } = require('./config');
 const { sources, MODELS, ENV_VAR_NAMES, TIER_ORDER, getModelsByTier, getModelsByProvider, getApiProviders } = require('./models');
 const { startProxyServer, PROXY_PORT } = require('./proxy');
 const { startDashboard } = require('./status-dashboard');
 const { runHealthCheck, getHealthyProviders } = require('./health-checker');
+const { syncCatalog, exportCatalog, getCatalogUrl } = require('./sync');
 
 // ============================================================================
 // CONSTANTS
 // ============================================================================
 const APP_NAME = 'free-llm-api-provider';
-const DEFAULT_KEY = 'sk-free-llm-api-provider';
+
+function getKey() { return getServerApiKey(loadConfig()); }
 
 // ============================================================================
 // INTERACTIVE CONFIG WIZARD
 // ============================================================================
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
-
-function question(prompt) {
+function question(rl, prompt) {
   return new Promise(resolve => {
     rl.question(prompt, answer => resolve(answer.trim()));
   });
@@ -47,6 +44,11 @@ function question(prompt) {
  * Interactive setup wizard - configure API keys for providers
  */
 async function configWizard() {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  
   console.log(`
 ╔══════════════════════════════════════════════════════════════╗
 ║     ${APP_NAME} - Configuration Wizard                      ║
@@ -94,9 +96,9 @@ Press Ctrl+C at any time to exit.
     if (existingKey) {
       const masked = existingKey.substring(0, 4) + '...' + existingKey.substring(existingKey.length - 4);
       console.log(`Current:  ${masked}`);
-      const change = await question('Update key? (y/N/skip): ');
+      const change = await question(rl, 'Update key? (y/N/skip): ');
       if (change.toLowerCase() === 'y') {
-        const newKey = await question(`Enter ${provider.name} API key: `);
+        const newKey = await question(rl, `Enter ${provider.name} API key: `);
         if (newKey) {
           addApiKey(config, providerKey, newKey);
           console.log('✅ Key updated');
@@ -107,7 +109,7 @@ Press Ctrl+C at any time to exit.
       if (hasEnv) {
         console.log(`✅ Found via environment variable ${envVar}`);
       } else {
-        const key = await question(`Enter ${provider.name} API key (or press Enter to skip): `);
+        const key = await question(rl, `Enter ${provider.name} API key (or press Enter to skip): `);
         if (key) {
           addApiKey(config, providerKey, key);
           console.log('✅ Key saved');
@@ -320,7 +322,7 @@ function generateLitellmConfig() {
   
   return {
     general_settings: {
-      master_key: DEFAULT_KEY,
+      master_key: getKey(),
       disable_spend_logs: true,
     },
     litellm_settings: {
@@ -376,7 +378,6 @@ function writeLitellmConfig() {
 // ============================================================================
 
 let proxyServer = null;
-let proxyProcess = null;
 
 function isPortInUse(port) {
   const net = require('net');
@@ -392,6 +393,10 @@ function isPortInUse(port) {
 }
 
 async function startProxy() {
+  // Ensure server API key exists (generates on first run)
+  const cfg = loadConfig();
+  ensureServerApiKey(cfg);
+  
   console.log('🚀 Starting free-llm-api-provider proxy...');
   
   const config = loadConfig();
@@ -416,7 +421,9 @@ async function startProxy() {
   // Start Node.js proxy server
   try {
     proxyServer = startProxyServer(PROXY_PORT);
-    console.log('✅ Proxy started on http://localhost:4000');
+    console.log('✅ Proxy started on http://localhost:4002');
+    console.log('   🌐 Admin UI:  http://localhost:4002/admin');
+    console.log(`   🔑 API Key:   ${getServerApiKey(loadConfig())}`);
     return true;
   } catch (err) {
     console.error('❌ Failed to start proxy:', err.message);
@@ -438,7 +445,7 @@ async function stopProxy() {
       if (process.platform === 'win32') {
         execSync(`FOR /F "tokens=5" %a IN ('netstat -ano ^| findstr :${PROXY_PORT}') DO taskkill /F /PID %a`, { stdio: 'ignore' });
       } else {
-        execSync(`lsof -ti:${PROXY_PORT} | xargs kill -9 2>/dev/null || true`, { stdio: 'ignore' });
+        execSync(`lsof -ti:${PROXY_PORT} | xargs -r kill -9 2>/dev/null || true`, { stdio: 'ignore' });
       }
       console.log('✅ Proxy stopped');
     } catch {
@@ -503,10 +510,8 @@ async function runFiableMode() {
   const analysisDuration = 10000;
   
   // Wait for analysis duration, re-checking every 2 seconds
-  const checks = [];
   while (Date.now() - startTime < analysisDuration) {
     await runHealthCheck(config);
-    checks.push(Date.now());
     const remaining = Math.max(0, analysisDuration - (Date.now() - startTime));
     if (remaining > 0) {
       await new Promise(resolve => setTimeout(resolve, Math.min(2000, remaining)));
@@ -606,8 +611,8 @@ async function addOpencodeConfig() {
     npm: "@ai-sdk/openai-compatible",
     name: "free-llm-api-provider",
     options: {
-      baseURL: "http://localhost:4000/v1",
-      apiKey: "sk-free-llm-api-provider"
+      baseURL: "http://localhost:4002/v1",
+      apiKey: getKey(),
     },
     models: {
       "tier-splus": {
@@ -698,6 +703,13 @@ Usage:
   free-llm-api-provider models            Alias for --models
   free-llm-api-provider --models --tier S+   List S+ tier models
   free-llm-api-provider --models --provider groq   List Groq models
+  free-llm-api-provider --sync                  Sync model catalog from remote
+  free-llm-api-provider sync --url <url>        Sync from custom URL
+  free-llm-api-provider --export-catalog        Export current models as JSON
+  free-llm-api-provider export-catalog --output ./catalog.json
+
+Admin Web UI (requires running proxy):
+  open http://localhost:4002/admin              Browser-based provider management
 
 Shortcuts (flap alias):
   flap status                        Same as free-llm-api-provider --status
@@ -709,7 +721,7 @@ Environment Variables:
   You can also set API keys via environment variables:
   NVIDIA_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, etc.
 
-API Key: ${DEFAULT_KEY}
+API Key: ${getKey()}
 Port: ${PROXY_PORT}
 `);
     process.exit(0);
@@ -782,14 +794,14 @@ Port: ${PROXY_PORT}
     process.exit(0);
   }
   
-  // --show / show
-  if (args.includes('--show') || firstArg === 'show') {
+  // show (bare word)
+  if (firstArg === 'show') {
     showConfig();
     process.exit(0);
   }
   
-  // --config / config
-  if (args.includes('--config') || firstArg === 'config') {
+  // config (bare word)
+  if (firstArg === 'config') {
     await configWizard();
     process.exit(0);
   }
@@ -800,8 +812,45 @@ Port: ${PROXY_PORT}
     process.exit(0);
   }
   
+  // --admin / admin (show admin URL)
+  if (args.includes('--admin') || firstArg === 'admin') {
+    console.log(`
+Admin Web UI: http://localhost:4002/admin
+
+Make sure the proxy is running (flap / free-llm-api-provider).
+`);
+    process.exit(0);
+  }
+  
+  // --sync / sync (catalog sync)
+  if (args.includes('--sync') || firstArg === 'sync') {
+    const urlIdx = args.indexOf('--url');
+    if (urlIdx !== -1 && args[urlIdx + 1]) {
+      process.env.CATALOG_URL = args[urlIdx + 1];
+    }
+    syncCatalog(true).then(ok => {
+      if (ok) console.log('✅ Catalog synced successfully');
+      else console.log('❌ Catalog sync failed. Set CATALOG_URL env var or use --url <url>');
+      process.exit(ok ? 0 : 1);
+    }).catch(err => {
+      console.error('❌ Sync error:', err.message);
+      process.exit(1);
+    });
+    return;
+  }
+  
+  // --export-catalog / export-catalog (export static catalog to JSON)
+  if (args.includes('--export-catalog') || firstArg === 'export-catalog') {
+    const path = args[args.indexOf('--output') + 1] || 'catalog.json';
+    exportCatalog(path);
+    process.exit(0);
+  }
+  
   // Default: start proxy (no args or "start")
   if (args.length === 0 || firstArg === 'start') {
+    // Auto-sync catalog on startup
+    syncCatalog().catch(() => {});
+    
     const config = loadConfig();
     const enabled = getEnabledProviders(config);
     
@@ -824,8 +873,8 @@ Or set environment variables:
       console.log(`✅ ${APP_NAME} is already running on port ${PROXY_PORT}`);
       console.log(`   Health: ${health.healthy_endpoints?.length || 0} endpoints`);
       console.log();
-      console.log('🔑 API Key:', DEFAULT_KEY);
-      console.log('🌐 Endpoint: http://localhost:4000/v1');
+      console.log('🔑 API Key:', getKey());
+      console.log('🌐 Endpoint: http://localhost:4002/v1');
       process.exit(0);
     } else {
       await startProxy();
