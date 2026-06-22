@@ -1,4 +1,9 @@
-# free-llm-api-provider
+<!--
+╔══════════════════════════════════════════════════════════════╗
+║  free-llm-api-provider                                     ║
+║  Local LLM proxy with auto-failover across 25+ free providers ║
+╚══════════════════════════════════════════════════════════════╝
+-->
 
 <p align="center">
   <a href="https://www.npmjs.com/package/free-llm-api-provider">
@@ -7,221 +12,224 @@
   <a href="https://www.npmjs.com/package/free-llm-api-provider">
     <img src="https://img.shields.io/npm/dw/free-llm-api-provider.svg" alt="npm downloads">
   </a>
-  <a href="https://github.com/alexjm19/free-llm-api-provider/blob/main/LICENSE">
+  <a href="https://github.com/liwoyuandiane/free-llm-api-provider/blob/main/LICENSE">
     <img src="https://img.shields.io/npm/l/free-llm-api-provider.svg" alt="MIT License">
+  </a>
+  <a href="https://github.com/liwoyuandiane/free-llm-api-provider/pkgs/container/free-llm-api-provider">
+    <img src="https://img.shields.io/badge/Docker-ghcr.io-blue?logo=docker" alt="Docker">
   </a>
 </p>
 
-A **self-contained local LLM proxy** with **automatic failover** across 25+ free AI providers and 238 models. No external dependencies — install once, configure keys, forget about it.
+<!-- Language selector -->
+<p align="center">
+  <sub>
+    🌐
+    <strong>中文</strong> ·
+    <a href="README_EN.md">English</a>
+  </sub>
+</p>
 
-> Stop managing API keys. Stop worrying about rate limits. Stop paying for AI.
+<h1 align="center">free-llm-api-provider</h1>
 
-## Why?
+<p align="center">
+  <b>自带 25+ 免费 AI 提供商、238+ 模型的本地 LLM 代理，自动故障切换，零外部依赖。</b>
+  <br>
+  装一次，配好 Key，就不用再操心了。
+</p>
 
-Free AI APIs break — rate limits, downtime, capacity issues. Your coding assistant dies mid-session.
+<hr>
 
-**free-llm-api-provider** runs a local OpenAI-compatible proxy that automatically routes to the next available provider when one fails. Zero config after setup.
+<p align="center">
+  <b>免费 AI API 总是不稳定</b> — 限流、宕机、容量不足，写到一半代码助手就挂了。
+  <br>
+  <b>free-llm-api-provider</b> 运行一个本地 OpenAI 兼容代理，自动路由到可用的提供商，全程无感。
+</p>
 
-## What It Does
+<hr>
 
-- **Health-aware routing**: Real-time ping monitoring routes to the healthiest provider instantly — no blind iteration
-- **Auto-failover**: 429/500/timeout → switch provider automatically
-- **Sticky provider**: Once a provider works, it keeps using it until it fails (faster response)
-- **Multi-key support**: Add multiple keys for the same provider, tries them all before failing over
-- **238 models** across 25 providers (NVIDIA, Groq, OpenRouter, Cerebras, etc.)
-- **Tier-based routing**: `tier-splus` (elite) → `tier-b` (default), with health scores overriding tiers
-- **Web Admin UI**: Browser-based management at `http://localhost:4002/admin` — manage providers, API keys, discover models
-- **Real-time status dashboard**: `--status` shows live provider health, latency, and quota
-- **10s reliability analysis**: `--fiable` finds the most stable provider right now
-- **Auto-generated API key**: Cryptographically random key generated on first run
-- **Model auto-discovery**: Discover new models from provider `/v1/models` endpoints via the admin UI
-- **OpenAI-compatible**: Works with Cursor, VS Code, Claude Desktop, OpenCode, any client
-- **Self-contained**: Built-in config manager + model catalog + health checker. No separate tools needed.
-- **Zero dependencies**: Pure Node.js. No Python, no Docker required.
+## 功能特性
 
-## Supported Providers
+- **健康感知路由** — 实时 Ping 监控，自动选最快的提供商
+- **自动故障切换** — 429/500/超时 → 自动换下一个提供商
+- **粘性路由** — 同一个提供商成功后持续使用，失败才切换（更快响应）
+- **多 Key 支持** — 一个提供商配多个 Key，逐个尝试再切换
+- **238+ 模型** — 覆盖 NVIDIA、Groq、OpenRouter、Cerebras 等 25+ 提供商
+- **等级路由** — `tier-splus`（旗舰）→ `tier-b`（默认），健康分覆盖等级
+- **Web 管理后台** — `http://localhost:4002/admin` 浏览器管理 Provider、Key
+- **实时状态面板** — `flap status` 显示实时健康、延时和配额
+- **模型自动发现** — 后台自动发现提供商的新模型
+- **自动生成 API Key** — 首次运行生成密码级随机 Key
+- **OpenAI 兼容** — 支持 Cursor、VS Code、Claude Desktop、OpenCode 等
+- **零外部依赖** — 纯 Node.js，无需 Python、无需 Docker（可选）
+- **Docker 支持** — 一键部署，数据库保存在当前目录
 
-| # | Provider | Models | Free Tier | Env Var |
-|---|----------|--------|-----------|---------|
-| 1 | NVIDIA NIM | 46 | ~40 RPM (no CC) | `NVIDIA_API_KEY` |
-| 2 | Groq | 8 | 30 RPM, 1K-14.4K/day | `GROQ_API_KEY` |
-| 3 | Cerebras | 4 | 30 RPM, 1M tokens/day | `CEREBRAS_API_KEY` |
-| 4 | OpenRouter | 25 | 50/day free, 1K/day with $10 | `OPENROUTER_API_KEY` |
-| 5 | SambaNova | 13 | Dev tier generous | `SAMBANOVA_API_KEY` |
-| 6 | Hyperbolic | 13 | $1 free credits | `HYPERBOLIC_API_KEY` |
-| 7 | Cloudflare | 15 | 10K neurons/day | `CLOUDFLARE_API_TOKEN` |
-| 8 | Google AI Studio | 6 | 14.4K/day | `GOOGLE_API_KEY` |
-| 9 | ZAI | 7 | Generous quota | `ZAI_API_KEY` |
-| 10 | Scaleway | 10 | 1M free tokens | `SCALEWAY_API_KEY` |
-| 11 | SiliconFlow | 6 | 100/day + $1 credits | `SILICONFLOW_API_KEY` |
-| 12 | + 14 more | | | |
+## 支持的提供商
 
-## Quick Start
+| # | 提供商 | 模型数 | 免费额度 | 环境变量 |
+|---|--------|--------|----------|----------|
+| 1 | NVIDIA NIM | 46 | ~40 RPM | `NVIDIA_API_KEY` |
+| 2 | Groq | 8 | 30 RPM, 1K-14.4K/天 | `GROQ_API_KEY` |
+| 3 | Cerebras | 4 | 30 RPM, 100万 token/天 | `CEREBRAS_API_KEY` |
+| 4 | OpenRouter | 25 | 50/天 免费, 1K/天 ($10) | `OPENROUTER_API_KEY` |
+| 5 | SambaNova | 13 | 开发版慷慨 | `SAMBANOVA_API_KEY` |
+| 6 | Hyperbolic | 13 | $1 免费额度 | `HYPERBOLIC_API_KEY` |
+| 7 | Cloudflare | 15 | 1万 neurons/天 | `CLOUDFLARE_API_TOKEN` |
+| 8 | Google AI Studio | 6 | 14.4K/天 | `GOOGLE_API_KEY` |
+| 9 | ZAI | 7 | 慷慨配额 | `ZAI_API_KEY` |
+| 10 | Scaleway | 10 | 100万 免费 token | `SCALEWAY_API_KEY` |
+| 11 | SiliconFlow | 6 | 100/天 + $1 额度 | `SILICONFLOW_API_KEY` |
+| 12 | + 14 个更多 | | | |
 
-### 1. Install
+> 通过 `flap sync` 可同步 litellm 目录（764 个模型，18 个提供商）
+
+## 快速开始
+
+### 安装
 
 ```bash
 npm install -g free-llm-api-provider
 ```
 
-### 2. Configure API Keys (One-time)
+> 也可以直接用 `npx free-llm-api-provider` 无需安装，但建议全局安装以便使用 `flap` 快捷命令。
+
+### 配置 API Key（只需一次）
 
 ```bash
-free-llm-api-provider --config
+flap config
 ```
 
-Interactive wizard prompts for keys. Need only **one** to start. More = better failover.
+交互式向导会引导你输入 Key。**只需要一个 Key 就能开始**，越多故障切换效果越好。
 
-**Recommended first key**: Groq — https://console.groq.com/keys (30 RPM, no credit card)
+**推荐首选 Key**：Groq — https://console.groq.com/keys （30 RPM，无需信用卡）
 
-**You can also set keys via environment variables:**
+**也可以设置环境变量：**
 ```bash
-export GROQ_API_KEY="your_key_here"
-export NVIDIA_API_KEY="your_key_here"
-export OPENROUTER_API_KEY="your_key_here"
+export GROQ_API_KEY="你的key"
+export NVIDIA_API_KEY="你的key"
 ```
 
-**Multi-key support**: You can add multiple keys for the same provider:
+**多 Key 支持**：同一个提供商可以添加多个 Key：
 ```bash
-# In the config wizard, add a key, then add another for the same provider
-# The proxy will try all keys before failing over to the next provider
+# 在配置向导中添加多个 Key，失败时会逐个尝试再切提供商
 ```
 
-**Where are keys stored?**
-- Config file: `~/.free-llm-api-provider.json` (outside project directory)
-- Or via environment variables (env vars override config file)
+**Key 存在哪里？**
+- 配置文件：`~/.free-llm-api-provider.json`（项目目录外）
+- 或环境变量（环境变量优先级更高）
 
-**Server API Key**: On first run, the proxy generates a cryptographically random API key (`sk-<64 hex chars>`) and stores it in the config file. This key is used by AI clients to connect to the proxy. Override with `FLAP_API_KEY` environment variable.
+**服务器 API Key**：首次运行自动生成密码级随机 Key（`sk-<64位hex>`），存储在 SQLite 数据库。AI 客户端用它连接代理。可通过 `FLAP_API_KEY` 环境变量覆盖。
 
-### 3. Start Proxy
+### 启动代理
 
 ```bash
-free-llm-api-provider
+flap
 ```
 
-Proxy runs at `http://localhost:4002`.
+代理运行在 `http://localhost:4002`。
 
-### 4. Configure Your AI Client
-
-| Client | Base URL | API Key |
-|--------|----------|---------|
-| Cursor | `http://localhost:4002/v1` | `sk-free-llm-api-provider` |
-| VS Code | `http://localhost:4002/v1` | `sk-free-llm-api-provider` |
-| Claude Desktop | `http://localhost:4002/v1` | `sk-free-llm-api-provider` |
-| OpenCode | `http://localhost:4002/v1` | `sk-free-llm-api-provider` |
-
-## CLI Commands
-
-All commands work **with or without `--`**:
+### Docker 部署
 
 ```bash
-# Start proxy (default)
-free-llm-api-provider
-free-llm-api-provider start
+# 从 GitHub Container Registry 拉取
+docker pull ghcr.io/liwoyuandiane/free-llm-api-provider:main
 
-# Interactive config wizard
-free-llm-api-provider --config
-free-llm-api-provider config
-
-# Show current config
-free-llm-api-provider --show
-free-llm-api-provider show
-
-# Real-time provider health dashboard (live updating)
-free-llm-api-provider --status
-free-llm-api-provider status
-
-# 10-second reliability analysis (finds best provider right now)
-free-llm-api-provider --fiable
-free-llm-api-provider fiable
-
-# List all 238 models
-free-llm-api-provider --models
-free-llm-api-provider models
-
-# List S+ tier only
-free-llm-api-provider --models --tier S+
-free-llm-api-provider models --tier S+
-
-# List models for specific provider
-free-llm-api-provider --models --provider groq
-free-llm-api-provider models --provider groq
-
-# Stop / restart proxy
-free-llm-api-provider --stop
-free-llm-api-provider stop
-free-llm-api-provider --restart
-free-llm-api-provider restart
-
-# View proxy logs
-free-llm-api-provider --logs
-free-llm-api-provider logs
-
-# Test proxy health
-free-llm-api-provider --test
-free-llm-api-provider test
-
-# Open admin web UI URL
-free-llm-api-provider --admin
-free-llm-api-provider admin
+# 从任意目录运行（数据库保存在当前目录）
+cd /你的工作目录
+docker run -d \
+  --name flap \
+  -p 4002:4002 \
+  -e DATA_DIR=/app/data \
+  -e FLAP_API_KEY=你的key \
+  -e FLAP_ADMIN_PASSWORD=admin密码 \
+  -e GROQ_API_KEY=你的key \
+  -v $(pwd):/app/data \
+  ghcr.io/liwoyuandiane/free-llm-api-provider:main
 ```
 
-### Web Admin UI
+### 配置 AI 客户端
 
-When the proxy is running, open **http://localhost:4002/admin** in your browser:
+| 客户端 | 地址 | API Key |
+|--------|------|---------|
+| Cursor | `http://localhost:4002/v1` | 自动生成的 Key |
+| VS Code | `http://localhost:4002/v1` | 同上 |
+| Claude Desktop | `http://localhost:4002/v1` | 同上 |
+| OpenCode | `http://localhost:4002/v1` | 同上 |
 
-- **Providers tab**: Enable/disable providers, add/remove API keys, test connections, discover models
-- **Models tab**: View the static model catalog (238 models) alongside auto-discovered models
-- **Health tab**: Real-time provider health scores, latency, and quota usage
-- **Settings tab**: Regenerate the server API key, run health checks
-
-The admin UI is served directly by the proxy — no separate server needed.
-
-### API Key
-
-On first run, the proxy automatically generates a **cryptographically random API key** (format: `sk-<64 hex chars>`). You can override it with the `FLAP_API_KEY` environment variable:
-
-```bash
-export FLAP_API_KEY="sk-your-custom-key-here"
-```
-
-The generated key is displayed when the proxy starts:
-
+启动代理时会显示 API Key：
 ```
 ✅ Proxy started on http://localhost:4002
-   🌐 Admin UI:  http://localhost:4002/admin
    🔑 API Key:   sk-d8eca3465befb4a3d623ec30fceb202c4512f03c24632268a25a09d3489713e1
 ```
 
-You can also regnerate it from the admin UI (Settings tab) or via the API:
-
+也可以在管理后台（设置页）或通过 API 重新生成：
 ```bash
 curl -X POST http://localhost:4002/api/admin/key/regenerate
 ```
 
-### Model Auto-Discovery
+## CLI 命令
 
-Providers that expose a `/v1/models` endpoint can have their models auto-discovered. In the admin UI, click **"发现模型"** next to any configured provider. Discovered models are added to the `/v1/models` API response and can be used directly by model ID in chat completion requests.
-
-Note: Most free AI providers do not expose a public `/v1/models` endpoint, so discovery may return empty results for many providers. The static catalog of 238 models covers the vast majority of use cases.
-
-### Shortcuts with `flap` alias
-
-After installation, you can also use the shorter `flap` command:
+所有命令都支持 `--` 前缀或不加：
 
 ```bash
-flap status          # Same as free-llm-api-provider --status
-flap test            # Same as free-llm-api-provider --test
-flap stop            # Same as free-llm-api-provider stop
-flap restart         # Same as free-llm-api-provider restart
-flap show            # Same as free-llm-api-provider --show
-flap models          # Same as free-llm-api-provider --models
-flap fiable          # Same as free-llm-api-provider --fiable
-flap logs            # Same as free-llm-api-provider --logs
-flap config          # Same as free-llm-api-provider --config
+# 启动代理（默认）
+flap
+flap start
+
+# 交互式配置向导
+flap config
+
+# 查看当前配置
+flap show
+
+# 实时健康面板（终端交互界面）
+flap status
+
+# 10 秒可靠性分析（找出当前最稳的提供商）
+flap fiable
+
+# 列出所有模型
+flap models
+
+# 查看 S+ 等级模型
+flap models --tier S+
+
+# 查看某个提供商的模型
+flap models --provider groq
+
+# 同步 litellm 模型目录
+flap sync
+
+# 导出当前模型为 JSON
+flap export-catalog --output ./catalog.json
+
+# 停止 / 重启代理
+flap stop
+flap restart
+
+# 查看日志
+flap logs
+
+# 测试代理健康
+flap test
 ```
 
-## API Usage
+## Web 管理后台
+
+代理运行后，浏览器打开 **http://localhost:4002/admin**
+
+首次访问会显示自动生成的密码，建议通过 `FLAP_ADMIN_PASSWORD` 环境变量设置固定密码。
+
+- **提供商页** — 启用/禁用提供商，添加/删除 API Key，测试连接，发现模型
+- **模型页** — 查看 238 个静态模型 + 自动发现的模型，设置等级，启用/禁用
+- **测试页** — 在线测试聊天补全（流式/非流式）
+- **健康页** — 实时提供商健康评分、延时、配额
+- **统计页** — 请求统计、速率限制状态
+- **自定义页** — 添加自定义提供商（任意 OpenAI 兼容 API）
+- **设置页** — 重新生成 API Key、修改密码
+
+管理后台由代理直接提供，无需额外服务。
+
+## API 使用
 
 ### Python
 
@@ -230,12 +238,12 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://localhost:4002/v1",
-    api_key="sk-free-llm-api-provider"
+    api_key="你的服务器API Key"
 )
 
 response = client.chat.completions.create(
-    model="tier-splus",  # or tier-s, tier-aplus, tier-a, tier-b
-    messages=[{"role": "user", "content": "Write hello world in Rust"}]
+    model="tier-splus",  # 或 tier-s, tier-aplus, tier-a, tier-b
+    messages=[{"role": "user", "content": "用 Rust 写个 hello world"}]
 )
 print(response.choices[0].message.content)
 ```
@@ -244,75 +252,75 @@ print(response.choices[0].message.content)
 
 ```bash
 curl http://localhost:4002/v1/chat/completions \
-  -H "Authorization: Bearer sk-free-llm-api-provider" \
+  -H "Authorization: Bearer 你的服务器API Key" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "tier-splus",
-    "messages": [{"role": "user", "content": "Hi"}]
+    "messages": [{"role": "user", "content": "你好"}]
   }'
 ```
 
-## How Failover Works
+## 故障切换原理
 
-### Health-Aware Routing (New)
+### 健康感知路由
 
-The proxy continuously pings all providers in the background. Each request is routed to the **healthiest provider first** — no blind iteration.
-
-```
-Provider Health Scores (updated every 30s):
-  Groq      → Score: 95, Latency: 198ms ✅
-  Cerebras  → Score: 80, Latency: 299ms
-  OpenRouter→ Score: 45, Latency: 1200ms (slow)
-
-Request → Groq (healthiest) → SUCCESS ✓
-```
-
-If the healthiest fails, it tries the next in score order. If no health data exists yet, falls back to tier-based ordering.
-
-### Traditional Failover (Fallback)
+代理后台持续 Ping 所有提供商，请求**优先发给最健康的那一个**：
 
 ```
-Request → NVIDIA → 429 rate limit
-        → Groq   → 500 error
-        → Cerebras → SUCCESS ✓
+提供商健康分（每 30 秒更新）：
+  Groq      → 得分: 95, 延迟: 198ms ✅
+  Cerebras  → 得分: 80, 延迟: 299ms
+  OpenRouter→ 得分: 45, 延迟: 1200ms (慢)
+
+请求 → Groq（最健康）→ 成功 ✓
 ```
 
-**Sticky provider optimization:**
+最健康的失败就按得分顺序尝试下一个。无健康数据时按等级排序回退。
+
+### 传统故障切换（回退）
+
 ```
-Request 1: Try providers until one works → OpenRouter ✅
-Request 2+: Use OpenRouter directly (fast!)
-Request N: OpenRouter fails → Try next provider → NVIDIA ✅
+请求 → NVIDIA → 429 限流
+     → Groq   → 500 错误
+     → Cerebras → 成功 ✓
 ```
 
-**Multi-key failover:**
+**粘性提供商优化：**
+```
+请求 1: 逐个尝试直到成功 → OpenRouter ✅
+请求 2+: 直接用 OpenRouter（快！）
+请求 N: OpenRouter 挂了 → 尝试下一个 → NVIDIA ✅
+```
+
+**多 Key 故障切换：**
 ```
 Groq key 1 → 401 ❌
 Groq key 2 → 429 ❌
-Groq key 3 → 200 ✅  ← Stays here until it fails
+Groq key 3 → 200 ✅  ← 停留在此直到失败
 ```
 
-Proxy handles retries + provider switching. Your client sees only success or final exhaust error.
+代理处理重试 + 提供商切换，客户端只看到成功或最终失败。
 
-## Model Tiers
+## 模型等级
 
-Tiers based on SWE-bench scores (coding benchmark), replicated from free-coding-models:
+基于 SWE-bench 编程基准测试评分（参考 free-coding-models）：
 
-| Tier | Score | Description |
-|------|-------|-------------|
-| `S+` | 70%+ | Frontier models. Best for complex refactors, architecture decisions |
-| `S`  | 60-70% | Excellent coding models. Reliable for most tasks |
-| `A+` | 50-60% | Very capable. Great alternatives to frontier models |
-| `A`  | 40-50% | Solid performers. Good for general coding |
-| `A-` | 35-40% | Decent. Usable for simpler tasks |
-| `B+` | 30-35% | Capable for smaller tasks and quick scripts |
-| `B`  | 20-30% | Entry-level. Default fallback tier |
-| `C`  | <20%   | Basic models. Last resort only |
+| 等级 | 得分 | 说明 |
+|------|------|------|
+| `S+` | 70%+ | 旗舰模型，适合复杂重构和架构决策 |
+| `S`  | 60-70% | 优秀编码模型，大部分任务可靠 |
+| `A+` | 50-60% | 非常强，旗舰模型的优秀替代 |
+| `A`  | 40-50% | 稳定发挥，适合通用编码 |
+| `A-` | 35-40% | 不错，可用于简单任务 |
+| `B+` | 30-35% | 小脚本和简单任务够用 |
+| `B`  | 20-30% | 入门级，默认回退等级 |
+| `C`  | <20%   | 基础模型，仅作最后手段 |
 
-Use tier aliases in requests: `tier-splus`, `tier-s`, `tier-aplus`, `tier-a`, `tier-aminus`, `tier-bplus`, `tier-b`
+请求中使用等级别名：`tier-splus`、`tier-s`、`tier-aplus`、`tier-a`、`tier-aminus`、`tier-bplus`、`tier-b`
 
-## Config File
+## 配置文件
 
-Stored at `~/.free-llm-api-provider.json`:
+存储在 `~/.free-llm-api-provider.json`：
 
 ```json
 {
@@ -328,48 +336,50 @@ Stored at `~/.free-llm-api-provider.json`:
 }
 ```
 
-**Priority order:**
-1. Environment variables (highest priority)
-2. Config file keys
-3. Multiple keys per provider (tries all before failing over)
+**优先级：**
+1. 环境变量（最高）
+2. 配置文件 Key
+3. 多 Key 逐个尝试后再切换
 
-## Troubleshooting
+## 常见问题
 
-**"No providers configured"**
-→ Run `free-llm-api-provider --config`
+**"没有配置提供商"**
+→ 运行 `flap config`
 
-**"Port 4002 in use"**
-→ `free-llm-api-provider --stop` then start again
+**"端口 4002 被占用"**
+→ `flap stop` 再重新启动
 
-**"Rate limit errors"**
-→ Normal with free APIs. Proxy auto-switches. Add more providers for better coverage.
+**"限流错误"**
+→ 免费 API 的正常现象，代理会自动切换。添加更多提供商效果更好。
 
-**"All providers failed"**
-→ Check your API keys are valid with `free-llm-api-provider --show`
+**"所有提供商都失败了"**
+→ 用 `flap show` 检查 API Key 是否有效
 
-## Architecture
+## 架构
 
-- **CLI + Config**: Pure Node.js, zero runtime dependencies
-- **Web Admin UI**: Browser-based management panel served by the proxy at `/admin`
-- **Model Catalog**: 238 models with tiers, replicated from free-coding-models
-- **Auto-Discovery**: Probe provider `/v1/models` endpoints to discover new models
-- **Health Checker**: Real-time ping monitoring with quota extraction from rate limit headers (core from free-coding-models)
-- **Proxy**: Node.js HTTP proxy with health-aware routing + sticky provider + failover
-- **Multi-key**: Automatically tries all keys per provider before failover
-- **Circuit breaker**: Temporarily skips failing providers
-- **Status Dashboard**: Live terminal UI showing provider health (`--status`)
-- **Reliability Analysis**: 10s analysis mode to find the most stable provider (`--fiable`)
+- **CLI + 配置**：纯 Node.js，零运行时依赖
+- **SQLite 数据库**：存储配置、Key、速率限制、会话等（`node:sqlite`，Node 22.5+）
+- **Web 管理后台**：代理内置 `/admin`，浏览器管理
+- **模型目录**：238 个静态模型 + litellm 同步 764 个模型
+- **模型自动发现**：探测提供商 `/v1/models` 端点发现新模型
+- **健康检查器**：实时 Ping + 限流头配额提取
+- **代理**：HTTP 代理 + 健康路由 + 粘性提供商 + 故障切换
+- **多 Key**：每个提供商自动尝试所有 Key 再切换
+- **熔断器**：临时跳过失败提供商（60 秒冷却）
+- **速率限制**：基于 SQLite 的 RPM/RPD 跟踪，按 Key 限流
+- **状态面板**：终端实时 UI（`flap status`）
+- **可靠性分析**：10 秒分析模式找出最稳定提供商（`flap fiable`）
 
-## License
+## 许可证
 
-MIT — Use freely, modify freely, no warranty.
+MIT — 自由使用、自由修改，无担保。
 
-## Star History
+## Star 历史
 
-<a href="https://www.star-history.com/?repos=alexjm19%2Ffree-llm-api-provider">
+<a href="https://www.star-history.com/?repos=liwoyuandiane%2Ffree-llm-api-provider">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=alexjm19/free-llm-api-provider&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=alexjm19/free-llm-api-provider&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=alexjm19/free-llm-api-provider&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=liwoyuandiane/free-llm-api-provider&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=liwoyuandiane/free-llm-api-provider&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=liwoyuandiane/free-llm-api-provider&type=date&legend=top-left" />
  </picture>
 </a>
