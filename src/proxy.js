@@ -972,10 +972,11 @@ function createServer() {
             res.end(result.body);
           }
         } catch (err) {
-          res.writeHead(503, { 'Content-Type': 'application/json' });
+          const isJsonError = err instanceof SyntaxError && err.message.includes('JSON');
+          res.writeHead(isJsonError ? 400 : 503, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
-            error: 'All providers failed',
-            message: err.message,
+            error: isJsonError ? 'Invalid request body' : 'All providers failed',
+            message: isJsonError ? '请求体 JSON 格式错误' : 'All providers failed. Check your API keys.',
             suggestion: 'Add more providers or check your API keys',
           }));
         }
@@ -1035,7 +1036,7 @@ function createServer() {
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
     } catch (err) {
-      console.error('[Proxy] Unhandled error:', err.stack || err.message);
+      console.error('[Proxy] Unhandled error:', err instanceof Error ? err.stack : String(err));
       try { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Internal server error' })); } catch(e) {}
     }
   });
@@ -1048,7 +1049,7 @@ function createServer() {
  */
 function startProxyServer(port = PROXY_PORT) {
   // Initialize SQLite database (creates tables, migrates data, ensures admin user)
-  try { initDatabase(); } catch (err) { console.error('[DB] Init error:', err.message); }
+  try { initDatabase(); } catch (err) { console.error('[DB] Init error:', err instanceof Error ? err.message : String(err)); }
   
   const server = createServer();
   

@@ -601,12 +601,12 @@ async function api(p,o={}) {
   opts.body=opts.body?JSON.stringify(opts.body):undefined;
   const r=await fetch(A+p,opts);
   const ct=r.headers.get('content-type')||'';
-  if(ct.includesc('json')) return r.json();
+  if(ct.includes('json')) return r.json();
   const text=await r.text();
   try{return JSON.parse(text);}catch{return {};}
 }
 function t(m,tp='succ'){const e=document.getElementById('toast');e.textContent=m;e.className='toast show '+tp;clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('show'),3000);}
-function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function copyKey(){const k=document.getElementById('serverKey').textContent;navigator.clipboard.writeText(k).then(()=>t('Key 已复制'));}
 function logout(){fetch('/api/admin/logout',{method:'POST'}).then(()=>window.location.href='/admin/login').catch(()=>window.location.href='/admin/login');}
 
@@ -622,10 +622,11 @@ async function rP() {
   if (!el) return;
   try {
     el.innerHTML = '<div class="load" style="margin:24px auto"></div>';
-    const pr = initData.allProviders || [];
-    const em = initData.enabledProviders || {};
-    const km = initData.apiKeys || {};
-    const tm = initData.testModels || {};
+    // Fetch fresh data from server instead of stale initData
+    const cfg = await api('/config');
+    const pr = cfg.allProviders || initData.allProviders || [];
+    const em = cfg.enabledProviders || initData.enabledProviders || {};
+    const km = cfg.apiKeys || initData.apiKeys || {};
     const hl = await api('/health').catch(()=>({}));
     const hm = {}; if (hl.providers) for (const p of hl.providers) hm[p.key] = p;
     el.innerHTML = pr.map(p => {
@@ -712,10 +713,17 @@ async function svkn(prov,key,inp){
   // Update initData so re-renders show the new notes
   const km=initData.apiKeys||{};
   const pks=km[prov]||[];
-  for(const k of pks){
+  let found=false;
+  for(let i=0;i<pks.length;i++){
+    const k=pks[i];
     const k2=typeof k==='string'?k:(k.key||k);
-    if(k2===key&&typeof k==='object'){k.notes=val;break;}
+    if(k2===key){
+      if(typeof k==='object'){k.notes=val;found=true;}
+      else{pks[i]={key,notes:val};found=true;}
+      break;
+    }
   }
+  if(!found){pks.push({key,notes:val});}
   ednRestore(inp,prov,key);
 }
 function ednRestore(inp,prov,key){

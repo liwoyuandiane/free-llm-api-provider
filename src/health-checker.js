@@ -285,9 +285,9 @@ async function runHealthCheck(config) {
 }
 
 function startHealthChecker(config) {
-  runHealthCheck(config).catch(err => console.error('[Health] Initial check error:', err.message));
+  runHealthCheck(config).catch(err => console.error('[Health] Initial check error:', err instanceof Error ? err.message : String(err)));
   const interval = setInterval(() => {
-    runHealthCheck(config).catch(err => console.error('[Health] Interval check error:', err.message));
+    runHealthCheck(config).catch(err => console.error('[Health] Interval check error:', err instanceof Error ? err.message : String(err)));
   }, HEALTH_CHECK_INTERVAL);
   return interval;
 }
