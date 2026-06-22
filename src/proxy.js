@@ -817,23 +817,24 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
  */
 function createServer() {
   const server = http.createServer(async (req, res) => {
-    // CORS headers
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    
-    if (req.method === 'OPTIONS') {
-      res.writeHead(200);
-      res.end();
-      return;
-    }
-    
-    // Parse URL
-    const reqUrl = new URL(req.url, 'http://127.0.0.1');
-    const pathname = reqUrl.pathname;
-    const query = Object.fromEntries(reqUrl.searchParams);
-    // Compatible wrapper for admin handler
-    const parsedUrl = { pathname, query };
+    try {
+      // CORS headers
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      
+      if (req.method === 'OPTIONS') {
+        res.writeHead(200);
+        res.end();
+        return;
+      }
+      
+      // Parse URL
+      const reqUrl = new URL(req.url, 'http://127.0.0.1');
+      const pathname = reqUrl.pathname;
+      const query = Object.fromEntries(reqUrl.searchParams);
+      // Compatible wrapper for admin handler
+      const parsedUrl = { pathname, query };
     
     // Health check
     if (pathname === '/health' && req.method === 'GET') {
@@ -1033,6 +1034,10 @@ function createServer() {
     // 404
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
+    } catch (err) {
+      console.error('[Proxy] Unhandled error:', err.stack || err.message);
+      try { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Internal server error' })); } catch(e) {}
+    }
   });
   
   return server;

@@ -215,39 +215,73 @@ function getAdminHtml() {
   .dot.unknown { background:var(--mut); }
   .dot.auth_error,.dot.rate_limited { background:var(--yellow); }
 
-  /* Provider row */
+  /* Provider section */
   .row {
-    display:flex; align-items:flex-start; gap:10px;
-    padding:12px 0; border-bottom:1px solid var(--b2);
+    background:var(--card); border:1px solid var(--border); border-radius:10px;
+    padding:16px 18px; margin-bottom:14px;
   }
-  .row:last-child { border-bottom:none; }
-  .pn { font-weight:600; font-size:14px; min-width:110px; padding-top:2px; }
-  .pi { display:flex; flex-direction:column; gap:6px; flex:1; min-width:0; }
-  .pi-top { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-  .pi-status { font-size:13px; color:var(--dim); }
+  .row:last-child { margin-bottom:0; }
+  .pn {
+    font-weight:700; font-size:14px; display:flex; align-items:center; gap:8px;
+  }
+  .pi { display:flex; flex-direction:column; gap:8px; flex:1; min-width:0; }
+  .pi-top {
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding-bottom:8px; border-bottom:1px solid var(--b2);
+  }
+  .pi-status { font-size:12px; color:var(--dim); }
+  .pi-actions {
+    display:flex; align-items:center; gap:8px; margin-left:auto; flex-shrink:0;
+  }
+  .pi-actions .btn { white-space:nowrap; }
+  .pi-link {
+    font-size:11px; color:var(--dim); text-decoration:none;
+  }
+  .pi-link:hover { color:var(--text); }
+  .pi-count {
+    font-size:12px; color:var(--dim); margin-left:auto; white-space:nowrap;
+  }
 
-  /* Key entry */
+  /* Key list */
+  .kl { display:flex; flex-direction:column; gap:0; }
+
+  /* Key row */
   .ke {
-    display:flex; align-items:center; gap:6px; padding:4px 8px;
-    background:var(--bg); border:1px solid var(--b2); border-radius:6px;
-    flex-wrap:wrap; margin:3px 0;
+    display:flex; align-items:center; gap:10px; padding:8px 0;
+    border-bottom:1px solid var(--b2); font-size:13px;
   }
+  .ke:last-child { border-bottom:none; }
   .ke .kid {
     font-family:'SF Mono','Fira Code',monospace; font-size:12px;
-    color:var(--dim); min-width:130px;
+    color:var(--dim); white-space:nowrap; min-width:140px;
   }
-  .ke input {
-    background:var(--bg); border:1px solid var(--b2); border-radius:4px;
-    color:var(--text); font-size:12px; padding:3px 6px; width:80px;
+  .ke .kn {
+    flex:1; color:var(--text); font-size:13px; min-width:0;
+    cursor:pointer; padding:2px 4px; border-radius:3px;
   }
-  .ke input:focus { outline:none; border-color:var(--blue); }
-  .ke .ke-actions { display:flex; gap:4px; }
-  .ke .ke-actions button {
-    padding:2px 8px; border:1px solid var(--b2); border-radius:4px;
-    background:var(--card); color:var(--dim); font-size:11px; cursor:pointer;
+  .ke .kn:hover { background:var(--hover); }
+  .ke .kn-empty { color:var(--mut); font-style:italic; }
+  .ke .kt {
+    font-size:11px; color:var(--mut); white-space:nowrap;
   }
-  .ke .ke-actions button:hover { background:var(--hover); color:var(--text); }
-  .ke .ke-actions .ke-del:hover { border-color:var(--red); color:var(--red); }
+  .ke .ka {
+    display:flex; gap:6px; flex-shrink:0;
+  }
+  .ke .ka button {
+    padding:2px 8px; border:none; border-radius:4px;
+    background:transparent; color:var(--dim); font-size:11px;
+    cursor:pointer; white-space:nowrap;
+  }
+  .ke .ka button:hover { color:var(--text); background:var(--hover); }
+  .ke .ka .ka-del:hover { color:var(--red); }
+  .ke .ka .ka-edit { font-size:13px; }
+
+  /* Notes input (edit mode) */
+  .ke input.kn-input {
+    flex:1; background:var(--bg); border:1px solid var(--blue);
+    border-radius:4px; color:var(--text); font-size:12px;
+    padding:3px 6px; outline:none; min-width:0;
+  }
 
   /* Buttons */
   .btn {
@@ -599,32 +633,40 @@ async function rP() {
       const ks = km[p.key] || [];
       const h = hm[p.key];
       const st = h ? h.status : 'unknown';
-      const sl = h ? (h.status === 'up' ? '在线' : h.status) : '未检测';
-      const tmtm = tm[p.key] || '';
+      const stColor = st === 'up' ? 'var(--green)' : st === 'down' ? 'var(--red)' : 'var(--mut)';
+      const keyCount = (Array.isArray(ks) ? ks : [ks]).length;
       return '<div class="row">' +
-        '<label class="tog"><input type="checkbox" ' + (en ? 'checked' : '') + ' onchange="togP(\\'' + p.key + '\\',this.checked)"><span class="sl"></span></label>' +
-        '<div class="pi"><div class="pi-top">' +
-          '<span class="pn">' + esc(p.name) + '</span>' +
-          '<span class="dot ' + st + '"></span><span class="pi-status">' + sl + '</span>' +
-          '<div class="bg" style="margin-left:auto">' +
-            '<button class="btn btn-sm" onclick="tP(\\'' + p.key + '\\')">测试</button>' +
-            '<button class="btn btn-sm" onclick="dP(\\'' + p.key + '\\')">发现模型</button>' +
-          '</div></div>' +
-        ((Array.isArray(ks) ? ks : [ks]).map(k => {
-          const ks2 = typeof k === 'string' ? k : (k.key || k);
-          const nt = typeof k === 'object' && k.notes ? k.notes : '';
-          return '<div class="ke">' +
-            '<span class="kid">' + esc(ks2.slice(0,8)) + '...' + esc(ks2.slice(-4)) + '</span>' +
-            '<input type="text" value="' + esc(nt) + '" placeholder="备注" onchange="skn(\\'' + esc(p.key) + '\\',\\'' + esc(ks2) + '\\',this.value)">' +
-            '<div class="ke-actions">' +
-              '<button onclick="tsk(\\'' + esc(p.key) + '\\',\\'' + esc(ks2) + '\\')">测</button>' +
-              '<button class="ke-del" onclick="dk(\\'' + esc(p.key) + '\\',\\'' + esc(ks2) + '\\')">删</button>' +
-            '</div></div>';
-        }).join('')) +
-        '<div style="display:flex;gap:6px;align-items:center;margin-top:4px">' +
-          '<span style="font-size:12px;color:var(--dim)">测试模型:</span>' +
-          '<input type="text" value="' + esc(tmtm) + '" placeholder="模型ID" style="flex:1;max-width:200px;font-size:12px" onchange="stm(\\'' + p.key + '\\',this.value)">' +
-        '</div></div></div>';
+        '<div class="pi">' +
+          '<div class="pi-top">' +
+            '<label class="tog"><input type="checkbox" ' + (en ? 'checked' : '') + ' onchange="togP(\\'' + p.key + '\\',this.checked)"><span class="sl"></span></label>' +
+            '<span class="pn">' + esc(p.name) + '</span>' +
+            '<span class="dot ' + st + '"></span>' +
+            '<span class="pi-count">' + keyCount + ' 个密钥</span>' +
+            '<div class="pi-actions">' +
+              '<button class="btn btn-sm" onclick="tP(\\'' + p.key + '\\')">测试</button>' +
+              '<button class="btn btn-sm" onclick="dP(\\'' + p.key + '\\')">发现模型</button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="kl">' +
+            ((Array.isArray(ks) ? ks : [ks]).map(k => {
+              const ks2 = typeof k === 'string' ? k : (k.key || k);
+              const nt = typeof k === 'object' && k.notes ? k.notes : '';
+              const shortKey = ks2.slice(0,8) + '...' + ks2.slice(-4);
+              const dotColor = st === 'up' ? 'var(--green)' : st === 'down' ? 'var(--red)' : 'var(--mut)';
+              const stText = st === 'up' ? '健康' : st === 'down' ? '无效' : '未知';
+              return '<div class="ke">' +
+                '<span class="dot" style="background:' + dotColor + ';width:8px;height:8px;border-radius:50%;flex-shrink:0"></span>' +
+                '<span class="kid">' + esc(shortKey) + '</span>' +
+                '<span class="kn' + (!nt ? ' kn-empty' : '') + '" onclick="edn(this,\\'' + esc(p.key) + '\\',\\'' + esc(ks2) + '\\')">' + (esc(nt) || '添加备注...') + '</span>' +
+                '<span class="kt">' + stText + '</span>' +
+                '<span class="ka">' +
+                  '<button class="ka-edit" onclick="edn(this.closest(\'.ke\').querySelector(\'.kn\'),\\'' + esc(p.key) + '\\',\\'' + esc(ks2) + '\\')">✏️</button>' +
+                  '<button onclick="tsk(\\'' + esc(p.key) + '\\',\\'' + esc(ks2) + '\\')">检查</button>' +
+                  '<button class="ka-del" onclick="dk(\\'' + esc(p.key) + '\\',\\'' + esc(ks2) + '\\')">移除</button>' +
+                '</span></div>';
+            }).join('')) +
+          '</div>' +
+        '</div></div>';
     }).join('') || '<div class="empty">没有配置的提供商</div>';
     const sel = document.getElementById('nkp');
     if (sel) sel.innerHTML = '<option value="">选择...</option>' + pr.map(p => '<option value="' + p.key + '">' + esc(p.name) + '</option>').join('');
@@ -649,6 +691,47 @@ async function stm(prov,mid){await api('/test-model',{method:'POST',body:{provid
 async function dk(prov,key){if(!confirm('删除此 Key?'))return;await api('/provider-key/delete',{method:'POST',body:{provider:prov,key}});t('Key 已删除');rP();}
 async function skn(prov,key,notes){await api('/provider-key/notes',{method:'POST',body:{provider:prov,key,notes}});}
 async function tsk(prov,key){t('测试中...');const r=await api('/provider-key/test',{method:'POST',body:{provider:prov,key}});t(r.success?'✅ '+r.latency+'ms':'❌ '+(r.error||'失败'),r.success?'succ':'err');rP();}
+
+// Notes editing
+function edn(el,prov,key){
+  if(el.tagName==='INPUT')return;
+  const cur=el.textContent==='添加备注...'?'':el.textContent;
+  const inp=document.createElement('input');
+  inp.className='kn-input';
+  inp.value=cur;
+  inp.onblur=function(){svkn(prov,key,this);};
+  inp.onkeydown=function(e){if(e.key==='Enter')this.blur();if(e.key==='Escape'){this.dataset.cancel='1';this.blur();}};
+  el.replaceWith(inp);
+  inp.focus();
+  inp.select();
+}
+async function svkn(prov,key,inp){
+  if(inp.dataset.cancel==='1'){inp.dataset.cancel='';ednRestore(inp,prov,key);return;}
+  const val=inp.value.trim();
+  await skn(prov,key,val);
+  // Update initData so re-renders show the new notes
+  const km=initData.apiKeys||{};
+  const pks=km[prov]||[];
+  for(const k of pks){
+    const k2=typeof k==='string'?k:(k.key||k);
+    if(k2===key&&typeof k==='object'){k.notes=val;break;}
+  }
+  ednRestore(inp,prov,key);
+}
+function ednRestore(inp,prov,key){
+  const span=document.createElement('span');
+  const km=initData.apiKeys||{};
+  const pks=km[prov]||[];
+  let nt='';
+  for(const k of pks){
+    const k2=typeof k==='string'?k:(k.key||k);
+    if(k2===key){nt=typeof k==='object'&&k.notes?k.notes:'';break;}
+  }
+  span.className='kn'+(!nt?' kn-empty':'');
+  span.textContent=nt||'添加备注...';
+  span.onclick=function(){edn(this,prov,key);};
+  inp.replaceWith(span);
+}
 
 // Models
 async function rM(){
@@ -1257,6 +1340,16 @@ function parseFormBody(req) {
   });
 }
 
+function parseJsonBody(req) {
+  return new Promise(resolve => {
+    let body = '';
+    req.on('data', chunk => { body += chunk; if (body.length > MAX_BODY_SIZE) { req.destroy(); resolve({}); } });
+    req.on('end', () => {
+      try { resolve(JSON.parse(body)); } catch { resolve({}); }
+    });
+  });
+}
+
 // ============================================================================
 // Auth-protected route checker
 // ============================================================================
@@ -1318,9 +1411,17 @@ async function handleAdminRequest(parsedUrl, req, res) {
 
   // Login API endpoint
   if (path === '/api/admin/login' && req.method === 'POST') {
-    const form = await parseFormBody(req);
-    const username = form.username || 'admin';
-    const password = form.password || '';
+    const ct = (req.headers['content-type'] || '').toLowerCase();
+    let username, password;
+    if (ct.includes('json')) {
+      const json = await parseJsonBody(req);
+      username = json.username || 'admin';
+      password = json.password || '';
+    } else {
+      const form = await parseFormBody(req);
+      username = form.username || 'admin';
+      password = form.password || '';
+    }
     const user = verifyAdminLogin(username, password);
     if (user) {
       const token = createSession(user.username);

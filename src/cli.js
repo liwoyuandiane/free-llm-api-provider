@@ -23,6 +23,10 @@ const { startDashboard } = require('./status-dashboard');
 const { runHealthCheck, getHealthyProviders } = require('./health-checker');
 const { syncCatalog, exportCatalog, getCatalogUrl } = require('./sync');
 
+// Global error handlers to prevent crashes
+process.on('uncaughtException', err => { console.error('[FATAL] Uncaught exception:', err.stack || err.message); });
+process.on('unhandledRejection', (reason, promise) => { console.error('[FATAL] Unhandled rejection:', reason instanceof Error ? reason.stack : reason); });
+
 // ============================================================================
 // CONSTANTS
 // ============================================================================
