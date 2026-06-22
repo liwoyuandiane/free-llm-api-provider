@@ -371,6 +371,27 @@ Stored at `~/.free-llm-api-provider.json`:
 - **Status Dashboard**: Live terminal UI (`flap status`)
 - **Reliability Analysis**: 10s analysis for most stable provider (`flap fiable`)
 
+## Data Sources
+
+This project integrates model data from multiple sources:
+
+**Model Data**:
+- **litellm Model Catalog** — Synced via `flap sync` from [litellm's model_prices_and_context_window.json](https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json), containing 2800+ models with context windows, pricing, vision support, etc.
+- **Static Model Catalog** — Built-in 238 curated models covering 25+ providers
+- **Model Auto-Discovery** — Background probing of provider `/v1/models` endpoints
+- **User Custom** — Admin UI supports adding custom providers and models
+
+**Provider Information**: Provider names, endpoint URLs, and documentation links sourced from official docs and community-maintained lists.
+
+## Acknowledgments
+
+Thanks to the following open-source projects for inspiration and data:
+
+- [litellm](https://github.com/BerriAI/litellm) — Community-driven model catalog with comprehensive model metadata (context windows, pricing, vision flags). The core data source for model sync.
+- [free-coding-models](https://github.com/alexjm19/free-coding-models) — Original reference for the static model catalog and tier classification.
+- [OpenRouter](https://openrouter.ai) — Excellent AI model aggregation platform that inspired model auto-discovery.
+- All free AI providers — NVIDIA, Groq, Cerebras, SambaNova, Replicate, DeepInfra and many more, providing valuable free AI compute for developers.
+
 ## License
 
 MIT — Use freely, modify freely, no warranty.

@@ -370,6 +370,27 @@ Groq key 3 → 200 ✅  ← 停留在此直到失败
 - **状态面板**：终端实时 UI（`flap status`）
 - **可靠性分析**：10 秒分析模式找出最稳定提供商（`flap fiable`）
 
+## 数据来源
+
+本项目整合了多个开源模型数据来源：
+
+**模型数据**：
+- **litellm 模型目录** — 通过 `flap sync` 从 [litellm 的 model_prices_and_context_window.json](https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json) 同步，包含 2800+ 模型的上下文窗口、定价、视觉支持等信息
+- **静态模型目录** — 内置 238 个经过筛选的模型，覆盖 25+ 提供商的基础能力
+- **模型自动发现** — 后台自动探测提供商 `/v1/models` 端点，发现并注册新模型
+- **用户自定义** — 管理后台支持添加自定义提供商和模型
+
+**提供商信息**：提供商名称、端点 URL、文档链接来自各官方文档和社区维护列表。
+
+## 致谢
+
+感谢以下开源项目对本文本项目的启发和帮助：
+
+- [litellm](https://github.com/BerriAI/litellm) — 社区驱动的模型目录，提供了详尽的模型元数据（上下文窗口、定价、视觉支持等），是本项目模型同步功能的核心数据来源
+- [free-coding-models](https://github.com/alexjm19/free-coding-models) — 静态模型目录和等级分类的原始参考，为本项目初始 238 个模型提供了基础
+- [OpenRouter](https://openrouter.ai) — 优秀的 AI 模型聚合平台，提供了模型自动发现的参考实现
+- 所有免费 AI 提供商 — NVIDIA、Groq、Cerebras、SambaNova、Replicate、DeepInfra 等，为开发者提供了宝贵的免费 AI 算力
+
 ## 许可证
 
 MIT — 自由使用、自由修改，无担保。
