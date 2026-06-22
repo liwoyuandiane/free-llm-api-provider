@@ -4,5 +4,7 @@ COPY package.json ./
 COPY src/ src/
 COPY check-deps.js ./
 RUN node check-deps.js && node -e "require('./src/proxy')"
+ENV DATA_DIR=/app/data
+RUN mkdir -p /app/data
 EXPOSE 4002
 CMD ["node", "src/cli.js"]

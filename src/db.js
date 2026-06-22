@@ -12,11 +12,13 @@ const os = require('os');
 const crypto = require('crypto');
 
 // ============================================================================
-// Paths
+// Paths — DATA_DIR env var overrides default ~/.free-llm-api-provider
 // ============================================================================
-const DB_DIR = path.join(os.homedir(), '.free-llm-api-provider');
+const DB_DIR = process.env.DATA_DIR || path.join(os.homedir(), '.free-llm-api-provider');
 const DB_PATH = path.join(DB_DIR, 'data.db');
-const CONFIG_PATH = path.join(os.homedir(), '.free-llm-api-provider.json');
+const CONFIG_PATH = process.env.DATA_DIR
+  ? path.join(process.env.DATA_DIR, 'config.json')
+  : path.join(os.homedir(), '.free-llm-api-provider.json');
 
 // ============================================================================
 // Singleton

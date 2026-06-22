@@ -11,9 +11,11 @@ const os = require('os');
 const crypto = require('crypto');
 const { getProviderKeys, addProviderKey, removeAllProviderKeys, isProviderEnabled: dbIsProviderEnabled, setProviderEnabled, getServerApiKey: dbGetServerApiKey, ensureServerApiKey: dbEnsureServerApiKey, getMeta, setMeta } = require('./db');
 
-const CONFIG_PATH = path.join(os.homedir(), '.free-llm-api-provider.json');
-const CONFIG_DIR = path.join(os.homedir(), '.config', 'free-llm-api-provider');
-const BACKUP_DIR = path.join(os.homedir(), '.free-llm-api-provider.backups');
+const CONFIG_PATH = process.env.DATA_DIR
+  ? path.join(process.env.DATA_DIR, 'config.json')
+  : path.join(os.homedir(), '.free-llm-api-provider.json');
+const CONFIG_DIR = process.env.DATA_DIR || path.join(os.homedir(), '.config', 'free-llm-api-provider');
+const BACKUP_DIR = process.env.DATA_DIR || path.join(os.homedir(), '.free-llm-api-provider.backups');
 
 // Environment variable names per provider
 const ENV_VARS = {

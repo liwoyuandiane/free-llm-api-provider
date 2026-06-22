@@ -45,3 +45,8 @@ config.json
 # Test artifacts
 test_logs/
 test_generate.js
+
+# Database files (generated at runtime)
+*.db
+*.db-shm
+*.db-wal

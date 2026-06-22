@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const DB_DIR = path.join(os.homedir(), '.free-llm-api-provider');
+const DB_DIR = process.env.DATA_DIR || path.join(os.homedir(), '.free-llm-api-provider');
 const DB_PATH = path.join(DB_DIR, 'data.db');
 
 // litellm's community-maintained model catalog — updated almost daily
