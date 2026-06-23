@@ -632,6 +632,8 @@ async function rP() {
     const km = cfg.apiKeys || initData.apiKeys || {};
     const hl = await api('/health').catch(()=>({}));
     const hm = {}; if (hl.providers) for (const p of hl.providers) hm[p.key] = p;
+    // Fetch test models
+    const tm = cfg.testModels || initData.testModels || {};
     el.innerHTML = pr.map(p => {
       const en = em[p.key] !== false;
       const ks = km[p.key] || [];
@@ -669,6 +671,10 @@ async function rP() {
                   '<button class="ka-del" onclick="dk(\\'' + jsesc(p.key) + '\\',\\'' + jsesc(ks2) + '\\')">移除</button>' +
                 '</span></div>';
             }).join('')) +
+          '</div>' +
+          '<div style="display:flex;gap:6px;align-items:center;margin-top:6px">' +
+            '<span style="font-size:11px;color:var(--mut)">测试模型:</span>' +
+            '<input type="text" value="' + esc(tm[p.key] || '') + '" placeholder="auto" style="flex:1;max-width:200px;font-size:11px;background:var(--bg);border:1px solid var(--b2);border-radius:4px;color:var(--text);padding:2px 6px" onchange="stm(\'' + jsesc(p.key) + '\',this.value)">' +
           '</div>' +
         '</div></div>';
     }).join('') || '<div class="empty">没有配置的提供商</div>';
@@ -1211,7 +1217,28 @@ async function handleTestSingleKey(req, res) {
 }
 
 async function runKeyTest(res, url, provider, apiKey) {
-  const modelId = getProviderTestModel(provider) || 'gpt-3.5-turbo';
+  // Default test models per provider (small/fast models)
+  const DEFAULT_TEST_MODELS = {
+    nvidia: 'meta/llama-3.1-8b-instruct',
+    groq: 'llama-3.1-8b-instant',
+    cerebras: 'llama3.1-8b',
+    googleai: 'gemma-3-27b-it',
+    deepinfra: 'meta-llama/Meta-Llama-3.1-8B-Instruct',
+    codestral: 'codestral-latest',
+    zai: 'zai/glm-4.5-flash',
+    sambanova: 'Meta-Llama-3.1-8B-Instruct',
+    openrouter: 'meta-llama/llama-3.1-8b-instruct:free',
+    together: 'meta-llama/Llama-3.1-8B-Instruct-Turbo',
+    fireworks: 'accounts/fireworks/models/llama-v3-8b',
+    hyperbolic: 'meta-llama/Meta-Llama-3.1-8B-Instruct',
+    scaleway: 'llama-3.1-8b-instruct',
+    qwen: 'qwen2.5-coder-32b-instruct',
+    siliconflow: 'Qwen/Qwen2.5-Coder-32B-Instruct',
+    chutes: 'meta-llama/Meta-Llama-3.1-8B-Instruct',
+    iflow: 'qwen3-32b',
+    opencode: 'llama-3.1-8b-instant',
+  };
+  const modelId = getProviderTestModel(provider) || DEFAULT_TEST_MODELS[provider] || 'gpt-3.5-turbo';
   const t0 = performance.now();
   try {
     const resp = await fetch(url, {
