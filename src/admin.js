@@ -609,7 +609,7 @@ async function api(p,o={}) {
 function t(m,tp='succ'){const e=document.getElementById('toast');e.textContent=m;e.className='toast show '+tp;clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('show'),3000);}
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 // Escape for JavaScript single-quoted string context (inline event handlers)
-function jsesc(s){return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");}
+  function jsesc(s){return String(s).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'");}
 function copyKey(){const k=document.getElementById('serverKey').textContent;navigator.clipboard.writeText(k).then(()=>t('Key 已复制'));}
 function logout(){fetch('/api/admin/logout',{method:'POST'}).then(()=>window.location.href='/admin/login').catch(()=>window.location.href='/admin/login');}
 
@@ -664,7 +664,7 @@ async function rP() {
                 '<span class="kn' + (!nt ? ' kn-empty' : '') + '" onclick="edn(this,\\'' + jsesc(p.key) + '\\',\\'' + jsesc(ks2) + '\\')">' + (esc(nt) || '添加备注...') + '</span>' +
                 '<span class="kt">' + stText + '</span>' +
                 '<span class="ka">' +
-                  '<button class="ka-edit" onclick="edn(this.closest(\'.ke\').querySelector(\'.kn\'),\\'' + jsesc(p.key) + '\\',\\'' + jsesc(ks2) + '\\')">✏️</button>' +
+                  '<button class="ka-edit" onclick="edn(this.closest(\\'.ke\\').querySelector(\\'.kn\\'),\\'' + jsesc(p.key) + '\\',\\'' + jsesc(ks2) + '\\')">✏️</button>' +
                   '<button onclick="tsk(\\'' + jsesc(p.key) + '\\',\\'' + jsesc(ks2) + '\\')">检查</button>' +
                   '<button class="ka-del" onclick="dk(\\'' + jsesc(p.key) + '\\',\\'' + jsesc(ks2) + '\\')">移除</button>' +
                 '</span></div>';
