@@ -200,9 +200,7 @@ function getAdminHtml() {
   .side-nav .ni{width:22px;height:22px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
   .side-nav .ni svg{width:20px;height:20px;fill:currentColor}
   .side-nav .nb{margin-left:auto;font-size:var(--font-sm);padding:2px 10px;border-radius:12px;background:var(--b2);color:var(--dim);font-weight:600}
-  .side-foot{padding:16px 18px;border-top:1px solid var(--border)}
-  .side-foot .kl{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;font-weight:600}
-  .side-foot .kv{font-family:'SF Mono','Fira Code',Consolas,monospace;font-size:var(--font-sm);color:var(--dim);word-break:break-all;background:var(--bg);padding:8px 12px;border-radius:var(--radius-sm);border:1px solid var(--b2);margin-bottom:10px;line-height:1.5}
+  .side-foot{padding:12px 16px;border-top:1px solid var(--border)}
   .side-foot .ka{display:flex;gap:8px}
   .side-foot .ka button{flex:1;padding:8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text-secondary);font-size:var(--font-sm);cursor:pointer;transition:var(--transition)}
   .side-foot .ka button:hover{background:var(--card-hover);color:var(--text)}
@@ -256,11 +254,14 @@ function getAdminHtml() {
   .btn-sm{padding:6px 14px;font-size:var(--font-sm)}
   .bg{display:flex;gap:8px;flex-wrap:wrap}
 
-  .tog{position:relative;width:40px;height:22px;display:inline-block;flex-shrink:0}
+  .tog{position:relative;width:44px;height:24px;display:inline-block;flex-shrink:0}
   .tog input{opacity:0;width:0;height:0}
-  .tog .sl{position:absolute;inset:0;background:var(--border);border-radius:22px;transition:.2s ease;cursor:pointer}
-  .tog .sl::before{content:'';position:absolute;width:16px;height:16px;left:3px;bottom:3px;background:var(--text);border-radius:50%;transition:.2s ease}
-  .tog input:checked+.sl{background:var(--blue)}.tog input:checked+.sl::before{transform:translateX(18px)}
+  .tog .sl{position:absolute;inset:0;background:var(--b2);border-radius:24px;transition:.25s cubic-bezier(.4,0,.2,1);cursor:pointer;border:2px solid transparent}
+  .tog .sl::before{content:'';position:absolute;width:18px;height:18px;left:1px;top:1px;background:var(--dim);border-radius:50%;transition:.25s cubic-bezier(.4,0,.2,1);box-shadow:0 1px 3px rgba(0,0,0,.2)}
+  .tog .sl:hover{border-color:var(--dim)}
+  .tog input:checked+.sl{background:var(--blue);border-color:var(--blue);box-shadow:0 0 12px rgba(91,138,255,.3)}
+  .tog input:checked+.sl::before{transform:translateX(20px);background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+  .tog input:focus-visible+.sl{outline:2px solid var(--blue);outline-offset:2px}
 
   .fr{display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
   .fr label{font-size:var(--font-base);min-width:80px;color:var(--text-secondary);font-weight:500}
@@ -305,6 +306,8 @@ function getAdminHtml() {
   .pg-msg.user{background:var(--blue-bg);border:1px solid rgba(91,138,255,0.15);align-self:flex-end;max-width:80%}
   .pg-msg.assistant{background:var(--bg);border:1px solid var(--border)}
   .pg-msg .pg-meta{font-size:var(--font-sm);color:var(--mut);margin-top:8px;padding-top:10px;border-top:1px solid var(--b2)}
+  .pg-cursor{color:var(--blue);animation:blink .8s step-end infinite;font-weight:300}
+  @keyframes blink{50%{opacity:0}}
   .pg-inp{display:flex;gap:10px;margin-top:8px}
   .pg-inp textarea{flex:1;min-height:56px;max-height:150px;font-size:var(--font-base)}
   .pg-inp button{align-self:flex-end}
@@ -313,7 +316,7 @@ function getAdminHtml() {
 
   @media(max-width:768px){
     :root{--sidebar-w:56px}
-    .side-head h1,.side-nav button span,.side-nav .nb,.side-foot .kl,.side-foot .kv,.side-foot .ka{display:none}
+    .side-head h1,.side-nav button span,.side-nav .nb,.side-foot .ka{display:none}
     .side-head{padding:12px;justify-content:center}
     .side-nav button{justify-content:center;padding:10px}
     .side-nav .ni{width:24px;height:24px}
@@ -339,9 +342,7 @@ function getAdminHtml() {
       <button data-p="settings" onclick="sp('settings')"><span class="ni"><svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1115.6 12 3.611 3.611 0 0112 15.6z"/></svg></span><span>设置</span></button>
     </nav>
     <div class="side-foot">
-      <div class="kl">API Key</div>
-      <div class="kv" id="serverKey">loading...</div>
-      <div class="ka"><button onclick="copyKey()">复制</button><button onclick="logout()" style="color:var(--red)">退出</button><button onclick="themeToggle()" title="切换主题" style="flex:none;width:32px;padding:4px"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm0 16c-3.86 0-7-3.14-7-7s3.14-7 7-7 7 3.14 7 7-3.14 7-7 7z"/><path d="M12 7v10c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg></button></div>
+      <div class="ka"><button onclick="logout()" style="color:var(--red)">退出</button><button onclick="themeToggle()" title="切换主题" style="flex:none;width:32px;padding:4px"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm0 16c-3.86 0-7-3.14-7-7s3.14-7 7-7 7 3.14 7 7-3.14 7-7 7z"/><path d="M12 7v10c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg></button></div>
     </div>
   </aside>
 
@@ -394,8 +395,10 @@ function getAdminHtml() {
             <option value="tier-a">tier-a</option>
             <option value="tier-b" selected>tier-b</option>
           </select>
-          <label style="min-width:auto;margin-left:4px">流式</label>
-          <label class="tog"><input type="checkbox" id="pgStream" checked><span class="sl"></span></label>
+          <div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding:4px 12px;background:var(--b2);border-radius:var(--radius-sm)">
+            <span style="font-size:var(--font-sm);color:var(--text-secondary);white-space:nowrap" id="pgStreamLabel">流式</span>
+            <label class="tog"><input type="checkbox" id="pgStream" checked onchange="document.getElementById('pgStreamLabel').textContent=this.checked?'流式':'非流式'"><span class="sl"></span></label>
+          </div>
         </div>
         <div id="pgChat" class="pg-chat" style="min-height:200px;max-height:500px;overflow-y:auto;margin-bottom:10px"></div>
         <div class="pg-inp">
@@ -430,6 +433,12 @@ function getAdminHtml() {
       <div class="pt">设置</div>
       <div class="pd">API Key 管理、密码修改</div>
       <div class="c">
+        <div class="ct" style="margin-bottom:4px">服务器 API Key</div>
+        <p style="font-size:14px;color:var(--dim);margin-bottom:10px">AI 客户端连接代理时使用此 Key</p>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+          <code id="serverKey" style="flex:1;font-family:'SF Mono','Fira Code',Consolas,monospace;font-size:var(--font-sm);color:var(--dim);word-break:break-all;background:var(--bg);padding:8px 12px;border-radius:var(--radius-sm);border:1px solid var(--b2)">loading...</code>
+          <button class="btn btn-sm" onclick="copyKey()">复制</button>
+        </div>
         <div class="ct" style="margin-bottom:4px">重新生成 API Key</div>
         <p style="font-size:14px;color:var(--dim);margin-bottom:10px">生成新 Key 后旧 Key 即时失效</p>
         <button class="btn btn-d" onclick="rK()">重新生成</button>
@@ -825,7 +834,10 @@ async function pgSend(){
   chat.innerHTML+='<div class="pg-msg user">'+esc(msg)+'</div>';
   inp.value='';chat.scrollTop=chat.scrollHeight;
 
-  const msgDiv=document.createElement('div');msgDiv.className='pg-msg assistant';msgDiv.innerHTML='<div class="load" style="margin:4px 0"></div>';chat.appendChild(msgDiv);chat.scrollTop=chat.scrollHeight;
+  const msgDiv=document.createElement('div');msgDiv.className='pg-msg assistant';
+  if(stream){msgDiv.innerHTML='<span class="pg-cursor">▊</span>';}
+  else{msgDiv.innerHTML='<div class="load" style="margin:4px 0"></div>';}
+  chat.appendChild(msgDiv);chat.scrollTop=chat.scrollHeight;
 
   try{
     const resp=await fetch('/v1/chat/completions',{
@@ -837,17 +849,29 @@ async function pgSend(){
     if(!resp.ok){msgDiv.innerHTML='<span style="color:var(--red)">HTTP '+resp.status+'</span>';chat.scrollTop=chat.scrollHeight;return;}
 
     if(stream){
-      const reader=resp.body.getReader();const decoder=new TextDecoder();let done=false,buffer='';
-      while(!done){const {value,done:dn}=await reader.read();done=dn;buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});}
-      const lines=buffer.split('\\n').filter(l=>l.startsWith('data:')&&l!=='data: [DONE]');
-      let streamError = '',streamModel='';
-      const contents=lines.map(l=>{try{const d=JSON.parse(l.slice(5));if(d.error) streamError = d.error;if(d.model) streamModel=d.model;return d.choices?.[0]?.delta?.content||'';}catch{return '';}}).join('');
-      if (streamError) msgDiv.innerHTML='<span style="color:var(--red)">'+esc(streamError)+'</span>';
+      const reader=resp.body.getReader();const decoder=new TextDecoder();let done=false,buffer='',contents='',streamModel='',streamError='';
+      while(!done){
+        const {value,done:dn}=await reader.read();done=dn;
+        buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});
+        const lines=buffer.split('\\n');
+        buffer=lines.pop()||'';
+        for(const line of lines){
+          if(!line.startsWith('data:')||line==='data: [DONE]')continue;
+          try{
+            const d=JSON.parse(line.slice(5));
+            if(d.error)streamError=d.error;
+            if(d.model)streamModel=d.model;
+            const delta=d.choices?.[0]?.delta?.content||'';
+            if(delta){contents+=delta;msgDiv.innerHTML=esc(contents)+'<span class="pg-cursor">▊</span>';chat.scrollTop=chat.scrollHeight;}
+          }catch{}
+        }
+      }
+      if(streamError)msgDiv.innerHTML='<span style="color:var(--red)">'+esc(streamError)+'</span>';
       else msgDiv.innerHTML=esc(contents||'(无内容)')+'<div class="pg-meta"><span style="color:var(--blue)">'+esc(provider)+'</span> · '+esc(streamModel||model)+'</div>';
     }else{
       const d=await resp.json();
-      if(d.error) { msgDiv.innerHTML='<span style="color:var(--red)">'+esc(d.error)+'</span>'; }
-      else {
+      if(d.error){msgDiv.innerHTML='<span style="color:var(--red)">'+esc(d.error)+'</span>';}
+      else{
         const c=d.choices?.[0]?.message?.content||'(无响应)';
         msgDiv.innerHTML=esc(c)+'<div class="pg-meta"><span style="color:var(--blue)">'+esc(provider)+'</span> · '+esc(d.model||model)+'</div>';
       }
