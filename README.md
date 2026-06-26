@@ -67,7 +67,7 @@
 
 | # | 提供商 | 模型数 | 免费额度 | 环境变量 |
 |---|--------|--------|----------|----------|
-| 1 | NVIDIA NIM | 46 | ~40 RPM | `NVIDIA_API_KEY` |
+| 1 | NVIDIA NIM | 13 | ~40 RPM | `NVIDIA_API_KEY` |
 | 2 | Groq | 8 | 30 RPM, 1K-14.4K/天 | `GROQ_API_KEY` |
 | 3 | Cerebras | 4 | 30 RPM, 100万 token/天 | `CEREBRAS_API_KEY` |
 | 4 | OpenRouter | 25 | 50/天 免费, 1K/天 ($10) | `OPENROUTER_API_KEY` |
@@ -78,9 +78,14 @@
 | 9 | ZAI | 7 | 慷慨配额 | `ZAI_API_KEY` |
 | 10 | Scaleway | 10 | 100万 免费 token | `SCALEWAY_API_KEY` |
 | 11 | SiliconFlow | 6 | 100/天 + $1 额度 | `SILICONFLOW_API_KEY` |
-| 12 | + 14 个更多 | | | |
+| 12 | **GitHub Models** 🆕 | 7 | 有速率限制 | `GITHUB_TOKEN` |
+| 13 | **Cohere** 🆕 | 4 | 有免费额度 | `COHERE_API_KEY` |
+| 14 | **Reka** 🆕 | 3 | 有免费额度 | `REKA_API_KEY` |
+| 15 | **Pollinations** 🆕 | 3 | 无需 Key | — |
+| 16 | **LLM7** 🆕 | 4 | 无需 Key | — |
+| 17 | + 10 个更多 | | | |
 
-> 通过 `flap sync` 可同步 litellm 目录（764 个模型，18 个提供商）
+> 通过 `flap sync` 可同步 litellm 目录（790+ 个模型，18 个提供商）
 
 ## 快速开始
 
@@ -114,7 +119,7 @@ export NVIDIA_API_KEY="你的key"
 ```
 
 **Key 存在哪里？**
-- 配置文件：`.data/config.json`（项目根目录下）
+- SQLite 数据库：`.data/data.db`（项目根目录下，所有数据都在这里）
 - 默认端口：`4002`（可通过环境变量 `FLAP_PORT` 或 `PORT` 自定义）
 - 或环境变量（环境变量优先级更高）
 
@@ -222,7 +227,7 @@ flap test
 
 - **提供商页** — 启用/禁用提供商，添加/删除 API Key，测试连接，发现模型
 - **模型页** — 查看 238 个静态模型 + 自动发现的模型，设置等级，启用/禁用
-- **测试页** — 在线测试聊天补全（流式/非流式）
+- **测试页** — 在线测试聊天补全（Enter 发送，Ctrl+Enter 换行），响应底部显示提供商和模型名
 - **健康页** — 实时提供商健康评分、延时、配额
 - **统计页** — 请求统计、速率限制状态
 - **自定义页** — 添加自定义提供商（任意 OpenAI 兼容 API）
@@ -319,39 +324,23 @@ Groq key 3 → 200 ✅  ← 停留在此直到失败
 
 请求中使用等级别名：`tier-splus`、`tier-s`、`tier-aplus`、`tier-a`、`tier-aminus`、`tier-bplus`、`tier-b`
 
-## 配置文件
+## 数据存储
 
-存储在 `.data/config.json`：
-
-```json
-{
-  "apiKeys": {
-    "groq": ["gsk_key1", "gsk_key2"],
-    "nvidia": "nvapi-key1",
-    "openrouter": "sk-or-key1"
-  },
-  "providers": {
-    "groq": { "enabled": true },
-    "nvidia": { "enabled": true }
-  }
-}
-```
+所有配置存储在 SQLite 数据库 `.data/data.db` 中。API Key 使用 AES-256-GCM 加密存储。
 
 **优先级：**
 1. 环境变量（最高）
-2. 配置文件 Key
+2. SQLite 数据库
 3. 多 Key 逐个尝试后再切换
 
 ## 数据目录
 
-默认所有数据（配置文件 + SQLite 数据库 + 备份）都存储在项目根目录的 `.data/` 文件夹下：
+所有运行时数据都存储在项目根目录的 `.data/` 文件夹下，**只需备份 `data.db` 即可完整迁移**：
 
 ```
 your-project/
-├── .data/            ← 所有运行时数据
-│   ├── config.json   ← API Key 和提供商配置
-│   ├── data.db       ← SQLite 数据库（Key、会话、限流等）
-│   └── backups/      ← 自动备份（最多保留 5 份）
+├── .data/
+│   └── data.db       ← SQLite 数据库（API Key、提供商配置、会话、限流等全部数据）
 ├── src/
 ├── ...
 ```
@@ -370,8 +359,6 @@ flap
 # Docker 容器（已自动映射）
 docker run -e DATA_DIR=/app/data -v $(pwd):/app/data ...
 ```
-
-设置为自定义路径后，所有数据文件（`config.json`、`data.db`）都会存到该目录下，方便多项目共享配置或迁到独立磁盘。
 
 ## 常见问题
 

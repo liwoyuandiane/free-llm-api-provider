@@ -68,7 +68,7 @@
 
 | # | Provider | Models | Free Tier | Env Var |
 |---|----------|--------|-----------|---------|
-| 1 | NVIDIA NIM | 46 | ~40 RPM | `NVIDIA_API_KEY` |
+| 1 | NVIDIA NIM | 13 | ~40 RPM | `NVIDIA_API_KEY` |
 | 2 | Groq | 8 | 30 RPM, 1K-14.4K/day | `GROQ_API_KEY` |
 | 3 | Cerebras | 4 | 30 RPM, 1M tokens/day | `CEREBRAS_API_KEY` |
 | 4 | OpenRouter | 25 | 50/day free, 1K/day ($10) | `OPENROUTER_API_KEY` |
@@ -79,9 +79,14 @@
 | 9 | ZAI | 7 | Generous quota | `ZAI_API_KEY` |
 | 10 | Scaleway | 10 | 1M free tokens | `SCALEWAY_API_KEY` |
 | 11 | SiliconFlow | 6 | 100/day + $1 credits | `SILICONFLOW_API_KEY` |
-| 12 | + 14 more | | | |
+| 12 | **GitHub Models** 🆕 | 7 | Rate limits | `GITHUB_TOKEN` |
+| 13 | **Cohere** 🆕 | 4 | Free tier | `COHERE_API_KEY` |
+| 14 | **Reka** 🆕 | 3 | Free tier | `REKA_API_KEY` |
+| 15 | **Pollinations** 🆕 | 3 | No key needed | — |
+| 16 | **LLM7** 🆕 | 4 | No key needed | — |
+| 17 | + 10 more | | | |
 
-> Run `flap sync` to sync 764 models from litellm catalog across 18 providers.
+> Run `flap sync` to sync 790+ models from litellm catalog across 18 providers.
 
 ## Quick Start
 
@@ -117,9 +122,9 @@ export OPENROUTER_API_KEY="your_key_here"
 ```
 
 **Where are keys stored?**
-- Config file: `.data/config.json` (inside project root)
+- SQLite database: `.data/data.db` (all data stored here)
 - Default port: `4002` (customize via `FLAP_PORT` or `PORT` env var)
-- Or via environment variables (env vars override config file)
+- Or via environment variables (env vars override database)
 
 **Server API Key**: On first run, generates a cryptographically random API key (`sk-<64 hex chars>`) stored in SQLite database. Used by AI clients to connect to the proxy. Override with `FLAP_API_KEY` env var.
 
@@ -225,7 +230,7 @@ Default credentials: `admin` / `admin123`. You'll be prompted to change the pass
 
 - **Providers tab**: Enable/disable providers, add/remove keys, test connections, discover models
 - **Models tab**: View 238 static models + discovered models, assign tiers, enable/disable
-- **Playground tab**: Test chat completions inline (streaming + non-streaming)
+- **Playground tab**: Test chat completions inline (Enter to send, Ctrl+Enter for newline), shows provider and model name in response
 - **Health tab**: Real-time provider health scores, latency, quota
 - **Stats tab**: Request statistics, rate limit status
 - **Custom tab**: Add custom OpenAI-compatible providers
@@ -320,39 +325,23 @@ Based on SWE-bench scores (coding benchmark):
 
 Use tier aliases: `tier-splus`, `tier-s`, `tier-aplus`, `tier-a`, `tier-aminus`, `tier-bplus`, `tier-b`
 
-## Config File
+## Data Storage
 
-Stored at `.data/config.json`:
-
-```json
-{
-  "apiKeys": {
-    "groq": ["gsk_key1", "gsk_key2"],
-    "nvidia": "nvapi-key1",
-    "openrouter": "sk-or-key1"
-  },
-  "providers": {
-    "groq": { "enabled": true },
-    "nvidia": { "enabled": true }
-  }
-}
-```
+All configuration is stored in the SQLite database `.data/data.db`. API keys are encrypted with AES-256-GCM.
 
 **Priority:**
 1. Environment variables (highest)
-2. Config file keys
+2. SQLite database
 3. Multiple keys (tries all before failing over)
 
 ## Data Directory
 
-All runtime data (config file + SQLite database + backups) is stored in the `.data/` directory under the project root by default:
+All runtime data is stored in the `.data/` directory under the project root. **Just back up `data.db` to fully migrate**:
 
 ```
 your-project/
-├── .data/            ← All runtime data
-│   ├── config.json   ← API keys and provider settings
-│   ├── data.db       ← SQLite database (keys, sessions, rate limits, etc.)
-│   └── backups/      ← Auto backups (up to 5 kept)
+├── .data/
+│   └── data.db       ← SQLite database (API keys, provider config, sessions, rate limits — everything)
 ├── src/
 ├── ...
 ```
@@ -371,8 +360,6 @@ flap
 # Docker (already mapped)
 docker run -e DATA_DIR=/app/data -v $(pwd):/app/data ...
 ```
-
-When set, all data files (`config.json`, `data.db`) are saved to that directory. Useful for sharing config across projects or moving to a dedicated disk.
 
 ## Troubleshooting
 
