@@ -616,17 +616,19 @@ async function rP() {
       opts += '<option value="__custom__">自定义供应商</option>';
       sel.innerHTML = opts;
     }
-    // 更新侧边栏模型 badge
+    // 更新侧边栏模型 badge（静态 + 发现，去重）
     const mb = document.getElementById('mb');
     if (mb) {
-      let total = 0;
+      const modelIds = new Set();
+      const allSm = cfg.allStaticModels || [];
+      const allDisc = cfg.discoveredModels || [];
       for (const [k, v] of Object.entries(km)) {
         if (Array.isArray(v) && v.length > 0) {
-          // 统计该提供商所有静态模型
-          total += (cfg.allStaticModels || []).filter(m => m[5] === k).length;
+          for (const m of allSm.filter(m => m[5] === k)) modelIds.add(m[0]);
+          for (const m of allDisc.filter(m => m.provider === k)) modelIds.add(m.id);
         }
       }
-      mb.textContent = total > 0 ? String(total) : '';
+      mb.textContent = modelIds.size > 0 ? String(modelIds.size) : '';
     }
   } catch(e) {
     // [Fix 2026-06-24] 显示更详细的错误信息
@@ -782,7 +784,11 @@ async function rM(){
   const keyedProviders=new Set(Object.keys(ak).filter(k=>Array.isArray(ak[k])&&ak[k].length>0));
   const gk=m=>{const p=m.provider||m[5]||'',id=m.id||m[0]||'';return p?p+'/'+id:id;};
   const ie=m=>ms[gk(m)]!==false,gt=m=>mt[gk(m)]||m.tier||m[2]||'';
-  const all=[...sm.map(m=>({id:m[0],name:m[1],tier:m[2],provider:m[5],source:'静态'})),...disc.map(m=>({id:m.id,name:m.id,tier:'discovered',provider:m.provider,source:'发现'}))];
+  // 静态模型 + 发现模型，按 model ID 去重（静态优先）
+  const seenIds=new Set();
+  const all=[];
+  for(const m of sm){const id=m[0];if(!seenIds.has(id)){seenIds.add(id);all.push({id,name:m[1],tier:m[2],provider:m[5],source:'静态'});}}
+  for(const m of disc){const id=m.id;if(!seenIds.has(id)){seenIds.add(id);all.push({id,name:m.id,tier:'discovered',provider:m.provider,source:'发现'});}}
   const filtered=all.filter(m=>keyedProviders.has(m.provider));
   // 更新侧边栏 badge
   const badge=document.getElementById('mb');
