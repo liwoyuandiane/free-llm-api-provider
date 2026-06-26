@@ -86,7 +86,7 @@ function checkContextFit(provider, reqBody) {
 }
 const { getHealthyProviders } = require('./health-checker');
 const { handleAdminRequest } = require('./admin');
-const { initDatabase, getDisabledModels, getCustomProviders, getCustomProviderModels, getServerApiKey: dbGetServerApiKey, getModelsWithTier, isRateLimited, recordRateLimit, setCooldown, cleanRateLimits, getStickyProvider, setStickyProvider, isVisionModel, logRequest } = require('./db');
+const { initDatabase, getDisabledModels, getCustomProviders, getCustomProviderModels, getServerApiKey: dbGetServerApiKey, getModelsWithTier, isRateLimited, recordRateLimit, setCooldown, cleanRateLimits, getStickyProvider, setStickyProvider, isVisionModel, logRequest, getAllProviderPriorities } = require('./db');
 
 /** 代理端口，默认 4002，可通过环境变量 FLAP_PORT 或 PORT 覆盖 */
 const PROXY_PORT = parseInt(process.env.FLAP_PORT || process.env.PORT || '4002', 10);
@@ -329,20 +329,35 @@ function getPrioritizedProviders(config, opts = {}) {
   // Add custom providers from SQLite
   addCustomProviders(providers, config);
 
-  // Sort by health score first (if available), then by tier priority
+  // Get custom provider priorities (user-defined ordering)
+  let customPriorities = {};
+  try { customPriorities = getAllProviderPriorities(); } catch {}
+
+  // Sort: custom priority first, then health score, then tier priority
   providers.sort((a, b) => {
-    // If both have health scores, sort by score desc, then latency asc
+    const aCustom = customPriorities[a.key];
+    const bCustom = customPriorities[b.key];
+    const aHasCustom = aCustom !== undefined && aCustom !== null;
+    const bHasCustom = bCustom !== undefined && bCustom !== null;
+
+    // Both have custom priority → sort by custom (lower = higher priority)
+    if (aHasCustom && bHasCustom) {
+      if (aCustom !== bCustom) return aCustom - bCustom;
+    }
+    // Only one has custom priority → prefer it
+    else if (aHasCustom) return -1;
+    else if (bHasCustom) return 1;
+
+    // No custom priority → use health score + tier
     if (a.healthScore >= 0 && b.healthScore >= 0) {
       if (b.healthScore !== a.healthScore) return b.healthScore - a.healthScore;
       if (a.healthLatency > 0 && b.healthLatency > 0) return a.healthLatency - b.healthLatency;
     }
-    // If only one has health score, prefer the one with health data
     if (a.healthScore >= 0 && b.healthScore < 0) return -1;
     if (b.healthScore >= 0 && a.healthScore < 0) return 1;
-    // Fall back to tier priority
     return a.priority - b.priority;
   });
-  
+
   return providers;
 }
 

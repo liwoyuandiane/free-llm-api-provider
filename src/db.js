@@ -349,6 +349,15 @@ function createTables() {
     )
   `);
 
+  // Provider priority (custom ordering by user)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS provider_priority (
+      provider TEXT PRIMARY KEY,
+      priority INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   // Analytics tables for request logging
   createAnalyticsTables();
 }
@@ -923,6 +932,38 @@ function getAdminUsername() {
 }
 
 // ============================================================================
+// Provider priority (custom ordering)
+// ============================================================================
+
+/**
+ * 获取所有提供商优先级设置
+ * @returns {object} { providerName: priorityNumber }
+ */
+function getAllProviderPriorities() {
+  const rows = db.prepare('SELECT provider, priority FROM provider_priority').all();
+  const result = {};
+  for (const row of rows) result[row.provider] = row.priority;
+  return result;
+}
+
+/**
+ * 设置提供商优先级
+ * @param {string} provider - 提供商名称
+ * @param {number} priority - 优先级数字（越小越优先，0 = 最高）
+ */
+function setProviderPriority(provider, priority) {
+  db.prepare('INSERT OR REPLACE INTO provider_priority (provider, priority, updated_at) VALUES (?, ?, datetime(\'now\'))').run(provider, priority);
+}
+
+/**
+ * 删除提供商优先级设置（恢复默认）
+ * @param {string} provider - 提供商名称
+ */
+function deleteProviderPriority(provider) {
+  db.prepare('DELETE FROM provider_priority WHERE provider = ?').run(provider);
+}
+
+// ============================================================================
 // Rate limiting (per-key RPM / RPD)
 // ============================================================================
 
@@ -1332,6 +1373,9 @@ module.exports = {
   logRequest,
   getAnalyticsSummary,
   getAnalyticsByProvider,
+  getAllProviderPriorities,
+  setProviderPriority,
+  deleteProviderPriority,
   getAnalyticsTimeSeries,
   getTopModels,
   cleanupOldAnalytics,

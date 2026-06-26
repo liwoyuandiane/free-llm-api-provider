@@ -7,7 +7,7 @@
 const { loadConfig, saveConfig, addApiKey, removeApiKey, getAllApiKeys, getServerApiKey } = require('./config');
 const { sources, MODELS, getModelsByProvider } = require('./models');
 const { runHealthCheck, getHealthyProviders } = require('./health-checker');
-const { verifyAdminLogin, createSession, validateSession, deleteSession, getDiscoveredModels: dbGetDiscoveredModels, saveDiscoveredModels, getAllProviderKeys, addProviderKey, updateProviderKeyNotes, removeProviderKey, removeAllProviderKeys, setProviderEnabled, isProviderEnabled, regenerateServerApiKey, setModelEnabled, getAllModelStates, getCustomProviders, saveCustomProvider, deleteCustomProvider, setCustomProviderEnabled, getCustomProviderModels, saveCustomProviderModel, deleteCustomProviderModel, changeAdminPassword, changeAdminUsername, getAdminUsername, getProviderTestModel, setProviderTestModel, setModelTier, getAllModelTiers, getServerApiKey: dbGetServerApiKey, isUsingDefaultPassword, markPasswordChanged } = require('./db');
+const { verifyAdminLogin, createSession, validateSession, deleteSession, getDiscoveredModels: dbGetDiscoveredModels, saveDiscoveredModels, getAllProviderKeys, addProviderKey, updateProviderKeyNotes, removeProviderKey, removeAllProviderKeys, setProviderEnabled, isProviderEnabled, regenerateServerApiKey, setModelEnabled, getAllModelStates, getCustomProviders, saveCustomProvider, deleteCustomProvider, setCustomProviderEnabled, getCustomProviderModels, saveCustomProviderModel, deleteCustomProviderModel, changeAdminPassword, changeAdminUsername, getAdminUsername, getProviderTestModel, setProviderTestModel, setModelTier, getAllModelTiers, getServerApiKey: dbGetServerApiKey, isUsingDefaultPassword, markPasswordChanged, getAllProviderPriorities, setProviderPriority, deleteProviderPriority } = require('./db');
 
 /**
  * getAdminInitialData — 获取管理面板初始数据
@@ -357,6 +357,11 @@ function getAdminHtml() {
         <div id="providerList"><div class="load" style="margin:18px auto"></div></div>
       </div>
       <div class="c">
+        <div class="ct" style="margin-bottom:4px">提供商优先级</div>
+        <p style="font-size:14px;color:var(--dim);margin-bottom:10px">数字越小优先级越高（0 = 最高）。相同模型时优先使用高优先级提供商。</p>
+        <div id="priorityList"><div class="load" style="margin:8px 0"></div></div>
+      </div>
+      <div class="c">
         <div class="ct" style="margin-bottom:10px">添加 API Key</div>
         <div class="fr"><label>提供商</label><select id="nkp" style="flex:1" onchange="onNKPChange()"><option value="">选择...</option></select></div>
         <div id="customProviderFields" style="display:none">
@@ -487,7 +492,7 @@ function sp(n) {
   if(n==='models') rM();
   if(n==='health') rH();
   if(n==='stats') rS();
-  if(n==='providers') rP();
+  if(n==='providers'){rP();rPP();}
 }
 
 /**
@@ -653,6 +658,40 @@ async function rP() {
  * @param {boolean} e - 是否启用
  */
 async function togP(k,e){await api('/config',{method:'PUT',body:{toggleProvider:{key:k,enabled:e}}});t((e?'启用':'禁用')+' '+k);}
+/**
+ * rPP — 渲染提供商优先级列表
+ */
+async function rPP(){
+  const el=document.getElementById('priorityList');if(!el)return;
+  try{
+    const cfg=await api('/config');
+    const pr=cfg.allProviders||[];
+    const pp=cfg.providerPriorities||{};
+    const ak=cfg.apiKeys||{};
+    // 只显示有 API Key 的提供商
+    const withKeys=pr.filter(p=>{const k=ak[p.key];return Array.isArray(k)&&k.length>0;});
+    if(withKeys.length===0){el.innerHTML='<div style="color:var(--dim);font-size:14px">暂无已配置的提供商</div>';return;}
+    el.innerHTML=withKeys.map(p=>{
+      const val=pp[p.key]!==undefined?pp[p.key]:'';
+      return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--b2)">'+
+        '<span style="flex:1;font-weight:500">'+esc(p.name)+'</span>'+
+        '<input type="number" min="0" max="999" value="'+val+'" placeholder="默认"'+
+        ' style="width:70px;padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:14px;text-align:center"'+
+        ' onchange="setPP(\\''+jsesc(p.key)+'\\',this.value)"'+
+        ' onkeydown="if(event.key===\\'Enter\\')this.blur()">'+
+        (val!==''?'<button class="btn btn-sm" onclick="delPP(\\''+jsesc(p.key)+'\\')" title="恢复默认" style="padding:2px 8px;font-size:12px">✕</button>':'')+
+        '</div>';
+    }).join('');
+  }catch(e){el.innerHTML='<div style="color:var(--red)">加载失败</div>';}
+}
+/**
+ * setPP — 设置提供商优先级
+ */
+async function setPP(k,v){const n=v===''?null:Number(v);if(n!==null&&(isNaN(n)||n<0))return;if(n===null){await delPP(k);return;}await api('/provider-priority',{method:'POST',body:{provider:k,priority:n}});t('优先级已设置');}
+/**
+ * delPP — 删除提供商优先级（恢复默认）
+ */
+async function delPP(k){await api('/provider-priority',{method:'DELETE',body:{provider:k}});t('已恢复默认');rPP();}
 /**
  * tP — 测试提供商连接
  * @param {string} k - 提供商 key
@@ -988,6 +1027,7 @@ if (initData.adminUsername) {
 }
 loadSK().catch(err => console.warn('[Admin] loadSK 失败:', err));
 rP().catch(err => console.warn('[Admin] rP 失败:', err));
+rPP().catch(err => console.warn('[Admin] rPP 失败:', err));
 document.addEventListener('keydown',e=>{if(e.key==='Escape')cDM();});
 
 // 检测默认密码提示
@@ -1311,6 +1351,27 @@ async function handleSetModelTier(req, res) {
   jsonResponse(res, 200, { success: true });
 }
 
+async function handleGetProviderPriorities(res) {
+  const priorities = getAllProviderPriorities();
+  jsonResponse(res, 200, { priorities });
+}
+
+async function handleSetProviderPriority(req, res) {
+  const body = await readJsonBody(req);
+  const { provider, priority } = body;
+  if (!provider) return jsonResponse(res, 400, { error: 'Missing provider' });
+  if (priority === undefined || priority === null) return jsonResponse(res, 400, { error: 'Missing priority' });
+  setProviderPriority(provider, Number(priority));
+  jsonResponse(res, 200, { success: true });
+}
+
+async function handleDeleteProviderPriority(req, res) {
+  const body = await readJsonBody(req);
+  if (!body.provider) return jsonResponse(res, 400, { error: 'Missing provider' });
+  deleteProviderPriority(body.provider);
+  jsonResponse(res, 200, { success: true });
+}
+
 async function handleGetConfig(res) {
   const config = loadConfig();
   const allProviders = Object.entries(sources)
@@ -1350,6 +1411,10 @@ async function handleGetConfig(res) {
     try { const tm = getProviderTestModel(k); if (tm) testModels[k] = tm; } catch {}
   }
 
+  // Get provider priorities
+  let providerPriorities = {};
+  try { providerPriorities = getAllProviderPriorities(); } catch {}
+
   jsonResponse(res, 200, {
     serverApiKey: getServerApiKey(config),
     adminUsername: getAdminUsername(),
@@ -1362,6 +1427,7 @@ async function handleGetConfig(res) {
     customProviders,
     modelTiers,
     testModels,
+    providerPriorities,
   });
 }
 
@@ -1791,6 +1857,9 @@ async function handleAdminRequest(parsedUrl, req, res) {
         { method: 'POST',  path: '/custom-provider/model/delete', handler: () => handleDeleteCustomProviderModel(req, res) },
         { method: 'POST',  path: '/change-password',     handler: () => handleChangePassword(req, res) },
         { method: 'POST',  path: '/change-username',     handler: () => handleChangeUsername(req, res) },
+        { method: 'GET',   path: '/provider-priority',   handler: () => handleGetProviderPriorities(res) },
+        { method: 'POST',  path: '/provider-priority',   handler: () => handleSetProviderPriority(req, res) },
+        { method: 'DELETE', path: '/provider-priority',  handler: () => handleDeleteProviderPriority(req, res) },
       ];
 
       // 精确路径匹配
