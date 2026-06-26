@@ -13,7 +13,6 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const readline = require('readline');
-const os = require('os');
 
 // Our internal modules
 const { loadConfig, saveConfig, getApiKey, isProviderEnabled, addApiKey, getEnabledProviders, ensureServerApiKey, getServerApiKey, CONFIG_PATH } = require('./config');
@@ -572,7 +571,7 @@ async function runFiableMode() {
 // ============================================================================
 
 function findOpencodeConfig() {
-  const homedir = os.homedir();
+  const homedir = process.env.HOME || process.env.USERPROFILE || '/tmp';
   const candidates = [
     path.join(homedir, '.opencode', 'config.json'),
     path.join(homedir, 'AppData', 'Roaming', 'opencode', 'config.json'),
@@ -869,8 +868,8 @@ Make sure the proxy is running (flap / free-llm-api-provider).
   // --export-catalog / export-catalog (export static catalog to JSON)
   if (args.includes('--export-catalog') || firstArg === 'export-catalog') {
     const outputIndex = args.indexOf('--output');
-    const path = outputIndex !== -1 && outputIndex + 1 < args.length ? args[outputIndex + 1] : 'catalog.json';
-    exportCatalog(path);
+    const outputPath = outputIndex !== -1 && outputIndex + 1 < args.length ? args[outputIndex + 1] : 'catalog.json';
+    exportCatalog(outputPath);
     process.exit(0);
   }
   

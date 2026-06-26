@@ -292,6 +292,12 @@ async function runHealthCheck(config) {
 function startHealthChecker(config) {
   runHealthCheck(config).catch(err => console.error('[Health] Initial check error:', err instanceof Error ? err.message : String(err)));
   const interval = setInterval(() => {
+    // Cleanup stale entries (providers no longer in sources)
+    for (const key of healthState.keys()) {
+      if (!sources[key] || !sources[key].url || sources[key].cliOnly) {
+        healthState.delete(key);
+      }
+    }
     runHealthCheck(config).catch(err => console.error('[Health] Interval check error:', err instanceof Error ? err.message : String(err)));
   }, HEALTH_CHECK_INTERVAL);
   return interval;

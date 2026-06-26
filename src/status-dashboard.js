@@ -74,7 +74,6 @@ function drawLine(width) {
 
 function renderDashboard() {
   const providers = getHealthyProviders();
-  const config = loadConfig();
   const icons = getStatusIcons();
   
   let output = CLEAR_SCREEN;

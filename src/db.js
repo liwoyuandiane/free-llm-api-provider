@@ -15,8 +15,6 @@ const crypto = require('crypto');
 // ============================================================================
 /** AES-256-GCM 加密算法标识 */
 const ENCRYPTION_ALGORITHM = 'aes-256-gcm';
-/** 加密密钥长度（32 字节 = 256 位） */
-const ENCRYPTION_KEY_LENGTH = 32;
 /** GCM 认证标签长度（16 字节） */
 const ENCRYPTION_AUTH_TAG_LENGTH = 16;
 

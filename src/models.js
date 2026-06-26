@@ -525,6 +525,11 @@ function getModelLimits(modelId) {
     huggingface: 4096,
     perplexity: 4096,
     ovhcloud: 4096,
+    github: 4096,
+    cohere: 4096,
+    reka: 4096,
+    pollinations: 4096,
+    llm7: 4096,
   };
   
   const output = OUTPUT_LIMITS[provider] !== undefined ? OUTPUT_LIMITS[provider] : 8192;

@@ -8,6 +8,7 @@
 const http = require('http');
 const crypto = require('crypto');
 const path = require('path');
+const fs = require('fs');
 const { loadConfig, getEnabledProviders, getAllApiKeys, getServerApiKey } = require('./config');
 const { sources, getModelsByProvider, ENV_VAR_NAMES, getModelLimits, isProviderShutdown } = require('./models');
 

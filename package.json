@@ -24,7 +24,6 @@
     "src/",
     "LICENSE",
     "README.md",
-    "AGENTS.md",
     "check-deps.js"
   ],
   "bin": {

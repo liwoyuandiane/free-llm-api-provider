@@ -15,10 +15,6 @@ scripts/
 setup.py
 requirements.txt
 
-# Tests (excluded - development only)
-test/
-test_logs/
-
 # Logs
 *.log
 
@@ -52,8 +48,21 @@ config.json
 # Test artifacts
 test_logs/
 test_generate.js
+deep_test_v5.js
 
 # Database files (generated at runtime)
 *.db
 *.db-shm
 *.db-wal
+
+# Claude Code local config
+.claude/
+
+# OpenCode local config
+opencode.json
+
+# Empty upload directory
+.uploads/
+
+# Backup directory
+backups/
