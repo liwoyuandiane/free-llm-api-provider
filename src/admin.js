@@ -375,6 +375,7 @@ function getAdminHtml() {
       <div class="pd">启用/禁用模型，设置等级影响 tier 路由</div>
       <div class="c">
         <div class="ch"><span class="ct">所有模型</span><span style="font-size:13px;color:var(--dim)" id="mc"></span></div>
+        <div style="margin-bottom:12px"><input type="text" id="modelSearch" placeholder="搜索模型名称或提供商..." oninput="filterModels(this.value)" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:var(--font-base)"></div>
         <div style="overflow-x:auto">
         <table><thead><tr><th style="width:34px">启用</th><th>模型 ID</th><th>名称</th><th style="width:85px">等级</th><th>提供商</th><th style="width:50px">来源</th></tr></thead>
         <tbody id="mtb"></tbody></table>
@@ -820,6 +821,19 @@ async function tM(mid,prov,en){await api('/model-state',{method:'POST',body:{mod
  * @param {string} t - 分级名称
  */
 async function sT(mid,prov,t){await api('/model-tier',{method:'POST',body:{modelId:mid,provider:prov,tier:t}});}
+/**
+ * filterModels — 按关键词过滤模型列表
+ * @param {string} q - 搜索关键词（匹配模型 ID、名称、提供商）
+ */
+function filterModels(q){
+  const query=(q||'').toLowerCase().trim();
+  const rows=document.querySelectorAll('#mtb tr');
+  for(const row of rows){
+    if(!query){row.style.display='';continue;}
+    const text=row.textContent.toLowerCase();
+    row.style.display=text.includes(query)?'':'none';
+  }
+}
 
 // ── Playground 测试页面 ──
 

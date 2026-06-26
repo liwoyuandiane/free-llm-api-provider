@@ -17,7 +17,7 @@ services:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4002/health').then(r=>process.exit(r.ok?0:1))"]
+      test: ["CMD", "node", "-e", "fetch('http:/0.1:4002/health').then(r=>process.exit(r.ok?0:1))"]
       interval: 30s
       timeout: 5s
       retries: 3

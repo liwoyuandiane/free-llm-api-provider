@@ -151,6 +151,9 @@ const stats = {
 // Active provider tracking - stick to what works until it fails
 let activeProvider = null; // { key, apiKey, name, url, models }
 
+// Key rotation counters per provider (round-robin across multiple keys)
+const keyRotationCounters = new Map(); // providerKey -> number
+
 /**
  * Add custom providers from SQLite to the providers list.
  */
@@ -294,9 +297,18 @@ function getPrioritizedProviders(config, opts = {}) {
     }
     if (allKeys.length === 0) continue;
 
-    // Create an entry for each key (skip rate-limited keys)
+    // Round-robin key rotation: start from the current rotation index
+    const rotationIdx = keyRotationCounters.get(key) || 0;
+    const rotatedKeys = [];
     for (let i = 0; i < allKeys.length; i++) {
-      const apiKey = allKeys[i];
+      rotatedKeys.push(allKeys[(rotationIdx + i) % allKeys.length]);
+    }
+    // Advance counter for next request
+    keyRotationCounters.set(key, (rotationIdx + 1) % allKeys.length);
+
+    // Create an entry for each key (skip rate-limited keys)
+    for (let i = 0; i < rotatedKeys.length; i++) {
+      const apiKey = rotatedKeys[i];
       if (!provider?.noKeyRequired && isRateLimited(key, apiKey)) continue;
       providers.push({
         key,
