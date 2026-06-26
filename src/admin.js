@@ -379,7 +379,7 @@ function getAdminHtml() {
       <div class="pt">模型目录</div>
       <div class="pd">启用/禁用模型，设置等级影响 tier 路由</div>
       <div class="c">
-        <div class="ch"><span class="ct">所有模型</span><span style="font-size:13px;color:var(--dim)" id="mc"></span></div>
+        <div class="ch"><span class="ct">所有模型</span><span style="font-size:13px;color:var(--dim)" id="mc"></span><button class="btn btn-p btn-sm" id="saveTiersBtn" onclick="saveTiers()" style="display:none">保存等级</button></div>
         <div style="margin-bottom:12px"><input type="text" id="modelSearch" placeholder="搜索模型名称或提供商..." oninput="filterModels(this.value)" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:var(--font-base)"></div>
         <div style="overflow-x:auto">
         <table><thead><tr><th style="width:34px">启用</th><th>模型 ID</th><th>名称</th><th style="width:85px">等级</th><th>提供商</th><th style="width:50px">来源</th></tr></thead>
@@ -859,7 +859,36 @@ async function tM(mid,prov,en){await api('/model-state',{method:'POST',body:{mod
  * @param {string} prov - 提供商
  * @param {string} t - 分级名称
  */
-async function sT(mid,prov,t){await api('/model-tier',{method:'POST',body:{modelId:mid,provider:prov,tier:t}});}
+/**
+ * 待保存的等级变更 { 'provider/modelId': tier }
+ */
+const _pendingTiers={};
+/**
+ * sT — 记录模型等级变更（不立即保存）
+ */
+function sT(mid,prov,t){
+  const key=prov+'/'+mid;
+  _pendingTiers[key]={modelId:mid,provider:prov,tier:t};
+  const btn=document.getElementById('saveTiersBtn');
+  if(btn)btn.style.display='';
+}
+/**
+ * saveTiers — 批量保存所有待提交的等级变更
+ */
+async function saveTiers(){
+  const entries=Object.values(_pendingTiers);
+  if(entries.length===0)return;
+  let ok=0,fail=0;
+  for(const e of entries){
+    try{await api('/model-tier',{method:'POST',body:{modelId:e.modelId,provider:e.provider,tier:e.tier}});ok++;}
+    catch{fail++;}
+  }
+  // 清空待保存列表
+  for(const k of Object.keys(_pendingTiers))delete _pendingTiers[k];
+  const btn=document.getElementById('saveTiersBtn');
+  if(btn)btn.style.display='none';
+  t('等级已保存: '+ok+' 个'+(fail>0?', 失败 '+fail+' 个':''));
+}
 /**
  * filterModels — 按关键词过滤模型列表
  * @param {string} q - 搜索关键词（匹配模型 ID、名称、提供商）
