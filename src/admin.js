@@ -273,7 +273,9 @@ function getAdminHtml() {
   th{text-align:left;padding:12px 14px;border-bottom:2px solid var(--border);color:var(--text-secondary);font-weight:600;font-size:var(--font-sm);text-transform:uppercase;letter-spacing:.5px}
   td{padding:11px 14px;border-bottom:1px solid var(--b2);vertical-align:middle}
   tr:hover td{background:var(--card-hover)}
-  .ts{background:var(--bg);border:1px solid var(--b2);border-radius:var(--radius-sm);color:var(--text);font-size:var(--font-sm);padding:6px 10px}
+  .ts{background:var(--bg);border:1px solid var(--b2);border-radius:var(--radius-sm);color:var(--text);font-size:var(--font-sm);padding:6px 10px;transition:var(--transition)}
+  .ts.ts-modified{border-color:var(--yellow);background:var(--yellow-bg);box-shadow:0 0 0 2px rgba(251,191,36,.15);font-weight:600}
+  .ts.ts-modified:focus{border-color:var(--yellow);box-shadow:0 0 0 3px rgba(251,191,36,.25)}
 
   .hg{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
   .hc{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;transition:var(--transition);box-shadow:var(--shadow)}
@@ -869,6 +871,8 @@ const _pendingTiers={};
 function sT(mid,prov,t){
   const key=prov+'/'+mid;
   _pendingTiers[key]={modelId:mid,provider:prov,tier:t};
+  // 标记为已修改（黄色边框）
+  const sel=event?.target;if(sel)sel.classList.add('ts-modified');
   const btn=document.getElementById('saveTiersBtn');
   if(btn)btn.style.display='';
 }
@@ -883,6 +887,8 @@ async function saveTiers(){
     try{await api('/model-tier',{method:'POST',body:{modelId:e.modelId,provider:e.provider,tier:e.tier}});ok++;}
     catch{fail++;}
   }
+  // 移除所有已修改标记
+  document.querySelectorAll('.ts-modified').forEach(el=>el.classList.remove('ts-modified'));
   // 清空待保存列表
   for(const k of Object.keys(_pendingTiers))delete _pendingTiers[k];
   const btn=document.getElementById('saveTiersBtn');
