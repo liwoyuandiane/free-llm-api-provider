@@ -397,11 +397,11 @@ function getAdminHtml() {
       <div class="c">
         <div class="fr"><label>模型</label>
           <select id="pgModel" style="flex:1">
-            <option value="tier-splus">tier-splus</option>
+            <option value="tier-splus" selected>tier-splus</option>
             <option value="tier-s">tier-s</option>
             <option value="tier-aplus">tier-aplus</option>
             <option value="tier-a">tier-a</option>
-            <option value="tier-b" selected>tier-b</option>
+            <option value="tier-b">tier-b</option>
           </select>
           <div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding:4px 12px;background:var(--b2);border-radius:var(--radius-sm)">
             <span style="font-size:var(--font-sm);color:var(--text-secondary);white-space:nowrap" id="pgStreamLabel">流式</span>

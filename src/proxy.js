@@ -86,7 +86,7 @@ function checkContextFit(provider, reqBody) {
 }
 const { getHealthyProviders } = require('./health-checker');
 const { handleAdminRequest } = require('./admin');
-const { initDatabase, getDisabledModels, getCustomProviders, getCustomProviderModels, getServerApiKey: dbGetServerApiKey, getModelsWithTier, isRateLimited, recordRateLimit, setCooldown, cleanRateLimits, getStickyProvider, setStickyProvider, isVisionModel, logRequest, getAllProviderPriorities } = require('./db');
+const { initDatabase, getDisabledModels, getCustomProviders, getCustomProviderModels, getServerApiKey: dbGetServerApiKey, getModelsWithTier, isRateLimited, recordRateLimit, setCooldown, cleanRateLimits, getStickyProvider, setStickyProvider, isVisionModel, logRequest, getAllProviderPriorities, getDiscoveredModelsByProvider } = require('./db');
 
 /** 代理端口，默认 4002，可通过环境变量 FLAP_PORT 或 PORT 覆盖 */
 const PROXY_PORT = parseInt(process.env.FLAP_PORT || process.env.PORT || '4002', 10);
@@ -220,7 +220,7 @@ function getPrioritizedProviders(config, opts = {}) {
   const enabled = getEnabledProviders(config);
   const providers = [];
   
-  const tierPriority = { 'S+': 0, 'S': 1, 'A+': 2, 'A': 3, 'A-': 4, 'B+': 5, 'B': 6, 'C': 7 };
+  const tierPriority = { 'S+': 0, 'S': 1, 'A+': 2, 'A': 3, 'A-': 4, 'B+': 5, 'B': 6, 'C': 7, 'discovered': 8 };
   
   // Get health data if available
   const healthyProviders = getHealthyProviders();
@@ -261,13 +261,32 @@ function getPrioritizedProviders(config, opts = {}) {
     if (!providerUrl) continue;
     
     let models = getModelsByProvider(key);
-    // Append discovered models with manually assigned tiers
+    // Append discovered models
+    try {
+      const discovered = getDiscoveredModelsByProvider(key);
+      for (const dm of discovered) {
+        if (!models.find(m => m[0] === dm.model_id)) {
+          models.push([dm.model_id, dm.model_id, 'discovered', '', '128k']);
+        }
+      }
+    } catch {}
+    // Apply manually assigned tiers (overrides default tier)
     const tieredModels = getModelsWithTier(key);
     for (const tm of tieredModels) {
-      if (!models.find(m => m[0] === tm.model_id)) {
+      const existing = models.find(m => m[0] === tm.model_id);
+      if (existing) {
+        existing[2] = tm.tier; // Override tier
+      } else {
         models.push([tm.model_id, tm.model_id, tm.tier, '', '128k']);
       }
     }
+    // Sort models by tier (S+ first, discovered last)
+    const modelTierOrder = { 'S+': 0, 'S': 1, 'A+': 2, 'A': 3, 'A-': 4, 'B+': 5, 'B': 6, 'C': 7, 'discovered': 8 };
+    models.sort((a, b) => {
+      const ta = modelTierOrder[a[2]] ?? 9;
+      const tb = modelTierOrder[b[2]] ?? 9;
+      return ta - tb;
+    });
     // Filter out disabled models
     const disabledIds = getDisabledModels(key);
     if (disabledIds.length > 0) {
