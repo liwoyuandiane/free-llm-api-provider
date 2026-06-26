@@ -211,13 +211,14 @@ function applyCustomCatalog(catalog) {
   let count = 0;
 
   try {
+    db.exec('BEGIN');
     for (const [providerKey, providerData] of Object.entries(catalog.providers)) {
       if (!providerData.models || !Array.isArray(providerData.models)) continue;
 
       for (const model of providerData.models) {
         if (!Array.isArray(model) || model.length < 3) continue;
         const [modelId, label, tier, sweScore, ctx] = model;
-        
+
         try {
           db.prepare(
             'INSERT OR REPLACE INTO sync_models (provider, model_id, label, tier, swe_score, ctx) VALUES (?, ?, ?, ?, ?, ?)'
@@ -235,12 +236,14 @@ function applyCustomCatalog(catalog) {
       }
     }
 
+    db.exec('COMMIT');
     db.close();
     setLastSync(Date.now());
     console.log(`[Catalog] Synced ${count} models from custom catalog`);
     return true;
   } catch (err) {
     console.log('[Catalog] Apply failed:', err.message);
+    try { db.exec('ROLLBACK'); } catch {}
     try { db.close(); } catch {}
     return false;
   }

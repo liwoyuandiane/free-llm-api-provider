@@ -496,45 +496,41 @@ function parseCtxWindow(ctxStr) {
 }
 
 // Helper: Get model limits (context window, max output)
+// Searches static MODELS first, then synced models, then defaults
 function getModelLimits(modelId) {
+  // 1. Search static catalog
   const model = MODELS.find(m => m[0] === modelId);
-  if (!model) return { context: 128000, output: 8192 };
-  
-  const context = parseCtxWindow(model[4]);
-  const provider = model[5];
-  
-  // Provider-specific max output 查找表
+  if (model) {
+    const context = parseCtxWindow(model[4]);
+    const provider = model[5];
+    return { context, output: getProviderMaxOutput(provider) };
+  }
+
+  // 2. Search synced catalog
+  try {
+    const { getSyncedModels } = require('./sync');
+    for (const [providerKey] of Object.entries(sources)) {
+      const synced = getSyncedModels(providerKey);
+      const found = synced.find(m => m[0] === modelId);
+      if (found) {
+        return { context: parseCtxWindow(found[4]), output: getProviderMaxOutput(providerKey) };
+      }
+    }
+  } catch {}
+
+  // 3. Default
+  return { context: 128000, output: 8192 };
+}
+
+function getProviderMaxOutput(provider) {
   const OUTPUT_LIMITS = {
-    openrouter: 32000,
-    fireworks: 16384,
-    groq: 8192,
-    nvidia: 8192,
-    cerebras: 8192,
-    googleai: 8192,
-    hyperbolic: 8192,
-    zai: 8192,
-    codestral: 8192,
-    qwen: 8192,
-    cloudflare: 4096,
-    sambanova: 4096,
-    together: 4096,
-    deepinfra: 4096,
-    scaleway: 4096,
-    siliconflow: 4096,
-    replicate: 4096,
-    huggingface: 4096,
-    perplexity: 4096,
-    ovhcloud: 4096,
-    github: 4096,
-    cohere: 4096,
-    reka: 4096,
-    pollinations: 4096,
-    llm7: 4096,
+    openrouter: 32000, fireworks: 16384, groq: 8192, nvidia: 8192, cerebras: 8192,
+    googleai: 8192, hyperbolic: 8192, zai: 8192, codestral: 8192, qwen: 8192,
+    cloudflare: 4096, sambanova: 4096, together: 4096, deepinfra: 4096, scaleway: 4096,
+    siliconflow: 4096, replicate: 4096, huggingface: 4096, perplexity: 4096, ovhcloud: 4096,
+    github: 4096, cohere: 4096, reka: 4096, pollinations: 4096, llm7: 4096,
   };
-  
-  const output = OUTPUT_LIMITS[provider] !== undefined ? OUTPUT_LIMITS[provider] : 8192;
-  
-  return { context, output };
+  return OUTPUT_LIMITS[provider] !== undefined ? OUTPUT_LIMITS[provider] : 8192;
 }
 
 module.exports = {

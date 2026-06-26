@@ -1122,6 +1122,8 @@ function initDatabase() {
   const apiKey = ensureServerApiKey();
   // Clean old rate limit data
   cleanRateLimits();
+  // Clean old analytics data (keep 90 days)
+  cleanupOldAnalytics();
   // 迁移 config.json 中的遗留密钥到 SQLite
   migrateConfigJsonKeys();
   return { adminInfo, apiKey };

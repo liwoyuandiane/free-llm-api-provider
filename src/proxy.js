@@ -170,9 +170,11 @@ function addCustomProviders(providers, config) {
       // Block private/reserved IP ranges when not localhost
       const hostname = parsedUrl.hostname.toLowerCase();
       if (hostname !== '127.0.0.1' && hostname !== 'localhost' && hostname !== '::1') {
-        // Check for private IPs
+        // Check for private IPs (IPv4 + IPv6-mapped)
         const isPrivate = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|169\.254\.)/.test(hostname) ||
-          hostname === 'localhost' || hostname.endsWith('.local') || hostname.endsWith('.internal');
+          hostname === 'localhost' || hostname.endsWith('.local') || hostname.endsWith('.internal') ||
+          /^::ffff:(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.)/.test(hostname) ||
+          /^(fe80:|fc00:|fd00:|::1)/.test(hostname);
         if (isPrivate) continue;
       }
 
@@ -566,9 +568,14 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
   /** 原始请求中的模型名 */
   const originalModel = requestBody.model || '';
   // Build target URL - provider.url already includes full endpoint path
-  const targetUrl = provider.url.includes('/chat/completions')
+  let targetUrl = provider.url.includes('/chat/completions')
     ? provider.url
     : provider.url.replace(/\/$/, '') + '/v1/chat/completions';
+  // Resolve Cloudflare {account_id} placeholder
+  if (targetUrl.includes('{account_id}')) {
+    const accountId = (process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+    targetUrl = targetUrl.replace('{account_id}', accountId || 'missing-account-id');
+  }
 
   // Determine which models to try (multi-model failover within provider)
   let modelsToTry = [provider.models[0]]; // default: first model
@@ -580,10 +587,11 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
   }
 
   let lastError = null;
+  // Deep clone once before the loop to avoid repeated serialization
+  const baseBody = JSON.parse(JSON.stringify(requestBody));
 
   for (let modelIdx = 0; modelIdx < modelsToTry.length; modelIdx++) {
-  // Prepare request body - deep clone to avoid mutating original
-  let body = JSON.parse(JSON.stringify(requestBody));
+  const body = { ...baseBody };
   let selectedModelId = modelsToTry[modelIdx];
 
   /**
@@ -593,14 +601,12 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
     body.model = selectedModelId;
   }
 
-  // Get model limits and sanitize request body
+  // Get model limits and sanitize request body (remove Google/Gemini format fields)
   const limits = getModelLimits(selectedModelId);
   delete body.maxOutputTokens;
   delete body.responseModalities;
   delete body.safetySettings;
-  if (body.generationConfig) {
-    delete body.generationConfig.maxOutputTokens;
-  }
+  delete body.generationConfig;
 
   // Set max_tokens — respect user's value if lower than limit
   if (body.max_tokens === undefined || body.max_tokens >= limits.output) {

@@ -1073,11 +1073,6 @@ loadSK().catch(err => console.warn('[Admin] loadSK 失败:', err));
 rP().catch(err => console.warn('[Admin] rP 失败:', err));
 rPP().catch(err => console.warn('[Admin] rPP 失败:', err));
 document.addEventListener('keydown',e=>{if(e.key==='Escape')cDM();});
-
-// 检测默认密码提示
-if(new URLSearchParams(window.location.search).get('change_password')==='1'){
-  document.getElementById('changePwModal').classList.add('show');
-}
 </script>
 
 <!-- 修改密码弹窗（默认密码登录后强制显示） -->
@@ -1105,6 +1100,10 @@ if(new URLSearchParams(window.location.search).get('change_password')==='1'){
   </div>
 </div>
 <script>
+// 检测默认密码提示（弹窗 DOM 已就绪）
+if(new URLSearchParams(window.location.search).get('change_password')==='1'){
+  document.getElementById('changePwModal').classList.add('show');
+}
 function closeChangePwModal(){document.getElementById('changePwModal').classList.remove('show');history.replaceState(null,'',location.pathname);}
 async function doChangeDefaultPw(){
   const cur=document.getElementById('cpwCur').value;
@@ -1628,11 +1627,13 @@ async function handleTestProvider(req, res, providerKey) {
     return jsonResponse(res, 400, { error: 'No API key configured' });
   }
 
-  // [Fix 2026-06-24] 使用共享的 DEFAULT_TEST_MODELS 兜底，避免 'gpt-3.5-turbo' 不匹配
   let modelId = getProviderTestModel(providerKey) || DEFAULT_TEST_MODELS[providerKey] || '';
   if (!modelId) {
     const models = getModelsByProvider(providerKey);
-    modelId = models.length > 0 ? models[0][0] : 'gpt-3.5-turbo';
+    modelId = models.length > 0 ? models[0][0] : '';
+  }
+  if (!modelId) {
+    return jsonResponse(res, 200, { success: false, error: 'No test model configured for this provider' });
   }
 
   const t0 = performance.now();
