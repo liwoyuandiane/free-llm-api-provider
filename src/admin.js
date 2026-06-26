@@ -30,13 +30,28 @@ function getAdminInitialData() {
     }
   }
   // Embed API keys (masked for safety — full keys only via /api/admin/config)
+  // Include BOTH database keys AND environment variable keys
   const rawKeys = getAllProviderKeys();
+  const allApiKeys = getAllApiKeys(config, '');
   const apiKeys = {};
+  // Database keys
   for (const [prov, keys] of Object.entries(rawKeys)) {
     apiKeys[prov] = (Array.isArray(keys) ? keys : [keys]).map(k => {
       const ks = typeof k === 'string' ? k : (k.key || '');
       return { key: ks.length > 12 ? ks.slice(0, 8) + '...' + ks.slice(-4) : ks, notes: typeof k === 'object' ? (k.notes || '') : '' };
     });
+  }
+  // Environment variable keys (add if not already in database)
+  for (const [prov, src] of Object.entries(sources)) {
+    if (!src.url || src.cliOnly || src.zenOnly) continue;
+    if (apiKeys[prov] && apiKeys[prov].length > 0) continue;
+    const envKeys = getAllApiKeys(config, prov);
+    if (envKeys.length > 0) {
+      apiKeys[prov] = envKeys.map(k => ({
+        key: k.length > 12 ? k.slice(0, 8) + '...' + k.slice(-4) : k,
+        notes: '(环境变量)',
+      }));
+    }
   }
   // Embed test models
   const testModels = {};
@@ -1462,9 +1477,18 @@ async function handleGetConfig(res) {
     return src && src.url && !src.cliOnly;
   });
 
-  // Get API keys from SQLite
+  // Get API keys from SQLite + environment variables
   let apiKeys = {};
   try { apiKeys = getAllProviderKeys(); } catch {}
+  // Add environment variable keys if not in database
+  for (const [k, src] of Object.entries(sources)) {
+    if (!src.url || src.cliOnly || src.zenOnly) continue;
+    if (apiKeys[k] && apiKeys[k].length > 0) continue;
+    const envKeys = getAllApiKeys(config, k);
+    if (envKeys.length > 0) {
+      apiKeys[k] = envKeys.map(key => ({ key, notes: '(环境变量)' }));
+    }
+  }
 
   // Get model states and custom providers
   let modelStates = {};
