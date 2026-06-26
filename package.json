@@ -42,7 +42,7 @@
   "devDependencies": {},
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/alexjm19/free-llm-api-provider.git"
+    "url": "git+https://github.com/liwoyuandiane/free-llm-api-provider.git"
   },
   "publishConfig": {
     "access": "public"

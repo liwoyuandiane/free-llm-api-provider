@@ -6,11 +6,10 @@
  */
 
 const http = require('http');
-const https = require('https');
-const url = require('url');
+const crypto = require('crypto');
 const path = require('path');
 const { loadConfig, getEnabledProviders, getAllApiKeys, getServerApiKey } = require('./config');
-const { sources, getModelsByProvider, ENV_VAR_NAMES, getModelLimits } = require('./models');
+const { sources, getModelsByProvider, ENV_VAR_NAMES, getModelLimits, isProviderShutdown } = require('./models');
 
 // Token estimation (rough: ~4 chars per token for English, ~2 for CJK)
 function isStreaming(body) {
@@ -22,8 +21,14 @@ function getSessionId(reqBody) {
   // Use X-Session-Id or hash of first user message
   if (reqBody.session_id) return reqBody.session_id;
   if (reqBody.messages && reqBody.messages.length > 0) {
-    const first = reqBody.messages[0].content || '';
-    const str = String(first).substring(0, 200);
+    const first = reqBody.messages[0].content;
+    // Handle array content (vision messages) and string content
+    let str;
+    if (Array.isArray(first)) {
+      str = first.filter(p => p.type === 'text').map(p => p.text || '').join('').substring(0, 200);
+    } else {
+      str = String(first || '').substring(0, 200);
+    }
     let hash = 0;
     for (let i = 0; i < str.length; i++) { hash = ((hash << 5) - hash) + str.charCodeAt(i); hash |= 0; }
     return 's' + Math.abs(hash).toString(36);
@@ -49,53 +54,79 @@ function estimateTokens(messages) {
   let chars = 0;
   for (const msg of messages) {
     if (msg.content) {
-      chars += String(msg.content).length;
+      // Handle array content (vision messages with text + image_url parts)
+      if (Array.isArray(msg.content)) {
+        for (const part of msg.content) {
+          if (part.type === 'text' && part.text) chars += part.text.length;
+          else if (part.type === 'image_url') chars += 100; // rough estimate for image tokens
+        }
+      } else {
+        chars += String(msg.content).length;
+      }
     }
-    if (msg.role) {
-      chars += String(msg.role).length;
-    }
+    if (msg.role) chars += String(msg.role).length;
   }
-  // Add overhead for message formatting
   return Math.ceil(chars / 3.5) + messages.length * 4;
 }
 
-// Check if conversation fits in provider's model context
+// Check if conversation fits in provider's model context (checks best model)
 function checkContextFit(provider, reqBody) {
-  const modelId = provider.models[0];
-  if (!modelId) return { fits: true, tokens: 0, limit: 0 };
-  
-  const limits = getModelLimits(modelId);
   const estimatedTokens = estimateTokens(reqBody.messages);
-  const fits = estimatedTokens <= limits.context;
-  
-  return { fits, tokens: estimatedTokens, limit: limits.context, model: modelId };
+  // Try models in order until one fits
+  for (const modelId of provider.models) {
+    const limits = getModelLimits(modelId);
+    if (estimatedTokens <= limits.context) {
+      return { fits: true, tokens: estimatedTokens, limit: limits.context, model: modelId };
+    }
+  }
+  // None fit — report the first model's limit
+  const firstLimits = getModelLimits(provider.models[0] || '');
+  return { fits: false, tokens: estimatedTokens, limit: firstLimits.context, model: provider.models[0] || '' };
 }
 const { getHealthyProviders } = require('./health-checker');
 const { handleAdminRequest } = require('./admin');
-const { initDatabase, getDisabledModels, getCustomProviders, getCustomProviderModels, getServerApiKey: dbGetServerApiKey, getModelsWithTier, isRateLimited, recordRateLimit, setCooldown, cleanRateLimits, getStickyProvider, setStickyProvider, isVisionModel } = require('./db');
+const { initDatabase, getDisabledModels, getCustomProviders, getCustomProviderModels, getServerApiKey: dbGetServerApiKey, getModelsWithTier, isRateLimited, recordRateLimit, setCooldown, cleanRateLimits, getStickyProvider, setStickyProvider, isVisionModel, logRequest } = require('./db');
 
-const PROXY_PORT = 4002;
+/** 代理端口，默认 4002，可通过环境变量 FLAP_PORT 或 PORT 覆盖 */
+const PROXY_PORT = parseInt(process.env.FLAP_PORT || process.env.PORT || '4002', 10);
 
 // Read version from package.json
 let APP_VERSION = '1.0.0';
 try {
   const pkg = require(path.join(__dirname, '..', 'package.json'));
   if (pkg.version) APP_VERSION = pkg.version;
-} catch {} // fallback to default
+} catch (err) {
+  console.warn('[Proxy] Failed to read package.json:', err.message);
+} // fallback to default
 
-// Server API key — resolved from env var > SQLite > JSON config > legacy fallback
+/**
+ * API Key 常量时间比较，防时序攻击
+ */
+function timingSafeEqual(a, b) {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+// Server API key — resolved from env var > SQLite > JSON config > auto-generate
 function getServerKey() {
   const envKey = process.env.FLAP_API_KEY;
   if (envKey && envKey.startsWith('sk-')) return envKey;
   try {
     const dbKey = dbGetServerApiKey();
-    if (dbKey && dbKey !== 'sk-free-llm-api-provider') return dbKey;
-  } catch {}
+    if (dbKey && dbKey.startsWith('sk-')) return dbKey;
+  } catch (err) {
+    console.warn('[Proxy] getServerKey db error:', err.message);
+  }
   try {
     const config = loadConfig();
-    if (config.generatedApiKey) return config.generatedApiKey;
-  } catch {}
-  return 'sk-free-llm-api-provider';
+    if (config.generatedApiKey && config.generatedApiKey.startsWith('sk-')) return config.generatedApiKey;
+  } catch (err) {
+    console.warn('[Proxy] getServerKey config error:', err.message);
+  }
+  // Last resort: generate a new key
+  return 'sk-' + crypto.randomBytes(32).toString('hex');
 }
 
 // Request timeout per provider (ms)
@@ -105,6 +136,8 @@ const PROVIDER_TIMEOUT = 15000;
 const circuitBreaker = new Map(); // providerKey -> { failures, lastFailure, open }
 const CIRCUIT_THRESHOLD = 3;
 const CIRCUIT_RESET_MS = 30000;
+/** 速率限制冷却时间 (ms) */
+const RATE_LIMIT_COOLDOWN_MS = 60000;
 
 // Request stats
 const stats = {
@@ -112,7 +145,6 @@ const stats = {
   successfulRequests: 0,
   failedRequests: 0,
   providerUsage: new Map(),
-  errors: new Map(),
 };
 
 // Active provider tracking - stick to what works until it fails
@@ -121,7 +153,7 @@ let activeProvider = null; // { key, apiKey, name, url, models }
 /**
  * Add custom providers from SQLite to the providers list.
  */
-function addCustomProviders(providers, config, tierPriority) {
+function addCustomProviders(providers, config) {
   try {
     const customs = getCustomProviders();
     for (const cp of customs) {
@@ -170,7 +202,7 @@ function addCustomProviders(providers, config, tierPriority) {
       }
     }
   } catch (err) {
-    // Silently handle db errors for custom providers
+    console.warn('[Proxy] Failed to load custom providers:', err.message);
   }
 }
 
@@ -194,6 +226,11 @@ function getPrioritizedProviders(config, opts = {}) {
   }
   
   for (const key of enabled) {
+    // Skip providers past their shutdown date
+    if (isProviderShutdown(key)) continue;
+    // Skip zen-only providers (require special auth)
+    if (sources[key]?.zenOnly) continue;
+
     // Check if sync has an updated URL for this provider
     let provider = sources[key];
     let providerUrl = provider ? provider.url : null;
@@ -204,11 +241,19 @@ function getPrioritizedProviders(config, opts = {}) {
         providerUrl = syncUrl.url;
         // Update rate limits from sync data
         try {
-          const { PROVIDER_LIMITS } = require('./db');
-          PROVIDER_LIMITS[key] = { rpm: syncUrl.limits_rpm || 30, rpd: syncUrl.limits_rpd || 5000 };
-        } catch {}
+          const providerLimits = require('./db').getProviderLimits(key);
+          if (providerLimits) {
+            const updatedLimits = { rpm: syncUrl.limits_rpm || 30, rpd: syncUrl.limits_rpd || 5000 };
+            providerLimits.rpm = updatedLimits.rpm;
+            providerLimits.rpd = updatedLimits.rpd;
+          }
+        } catch (err) {
+          console.warn('[Proxy] 更新同步速率限制失败:', err.message);
+        }
       }
-    } catch {}
+    } catch (err) {
+      console.warn('[Proxy] 获取同步提供商 URL 失败:', err.message);
+    }
     if (!providerUrl) continue;
     
     let models = getModelsByProvider(key);
@@ -241,12 +286,17 @@ function getPrioritizedProviders(config, opts = {}) {
     const healthLatency = health && health.avgLatency > 0 ? health.avgLatency : Infinity;
     
     // Get ALL API keys for this provider (supports multiple keys)
-    const allKeys = getAllApiKeys(config, key);
-    
+    let allKeys = getAllApiKeys(config, key);
+    // No-key-required providers (Pollinations, LLM7) use a placeholder
+    if (allKeys.length === 0 && provider?.noKeyRequired) {
+      allKeys = ['no-key'];
+    }
+    if (allKeys.length === 0) continue;
+
     // Create an entry for each key (skip rate-limited keys)
     for (let i = 0; i < allKeys.length; i++) {
       const apiKey = allKeys[i];
-      if (isRateLimited(key, apiKey)) continue;
+      if (!provider?.noKeyRequired && isRateLimited(key, apiKey)) continue;
       providers.push({
         key,
         name: provider ? provider.name : key,
@@ -264,7 +314,7 @@ function getPrioritizedProviders(config, opts = {}) {
   }
 
   // Add custom providers from SQLite
-  addCustomProviders(providers, config, tierPriority);
+  addCustomProviders(providers, config);
 
   // Sort by health score first (if available), then by tier priority
   providers.sort((a, b) => {
@@ -461,220 +511,226 @@ function cleanResponseBody(bodyStr) {
 }
 
 /**
- * Forward request to a provider
+ * Forward request to a provider using fetch (supports HTTP/2, fixes NVIDIA ECONNRESET)
  */
-function forwardToProvider(provider, requestBody, onChunk = null) {
-  return new Promise((resolve, reject) => {
-    // Use provider.url directly - already includes full endpoint path
-    const targetUrl = provider.url.includes('/chat/completions') 
-      ? provider.url 
-      : provider.url.replace(/\/$/, '') + '/v1/chat/completions';
-    
-    const parsedUrl = new URL(targetUrl);
-    const isHttps = parsedUrl.protocol === 'https:';
-    const client = isHttps ? https : http;
-    
-    // Prepare request body - replace model if needed
-    let body = JSON.parse(JSON.stringify(requestBody));
-    
-    // DEBUG: Log complete received body
-    console.log(`[Proxy] DEBUG Received body keys: ${Object.keys(body).join(', ')}`);
-    if (body.maxOutputTokens !== undefined) {
-      console.log(`[Proxy] DEBUG maxOutputTokens=${body.maxOutputTokens} (type: ${typeof body.maxOutputTokens})`);
-    }
-    
-    // Map model names FIRST to know the actual model
-    let selectedModelId = body.model;
-    if (body.model && body.model.startsWith('tier-')) {
-      const targetModel = provider.models[0];
-      if (targetModel) {
-        body.model = targetModel;
-        selectedModelId = targetModel;
-      }
-    }
-    
-    // Get model limits
-    const limits = getModelLimits(selectedModelId);
-    
-    // ALWAYS use model's real limits, ignore whatever the IDE sends
-    // Remove IDE-specific params that providers don't understand
-    delete body.maxOutputTokens;  // Google/Gemini format
-    delete body.responseModalities;
-    delete body.safetySettings;
-    
-    // Also check nested objects for maxOutputTokens (some SDKs nest params)
-    if (body.generationConfig) {
-      delete body.generationConfig.maxOutputTokens;
-    }
-    
-    // Set max_tokens — respect user's value if provided and lower than limit
-    if (body.max_tokens !== undefined && body.max_tokens < limits.output) {
-      // Keep user's lower value
-    } else {
-      body.max_tokens = limits.output;
-    }
-    
-    const bodyStr = JSON.stringify(body);
+async function forwardToProvider(provider, requestBody, onChunk = null) {
+  /** 请求开始时间 */
+  const startTime = Date.now();
+  /** 原始请求中的模型名 */
+  const originalModel = requestBody.model || '';
+  // Build target URL - provider.url already includes full endpoint path
+  const targetUrl = provider.url.includes('/chat/completions')
+    ? provider.url
+    : provider.url.replace(/\/$/, '') + '/v1/chat/completions';
+
+  // Determine which models to try (multi-model failover within provider)
+  let modelsToTry = [provider.models[0]]; // default: first model
+  if (requestBody.model && requestBody.model.startsWith('tier-')) {
+    // For tier requests, try all models in this provider (best tier first)
+    modelsToTry = provider.models;
+  } else if (requestBody.model === 'auto' || !requestBody.model) {
+    modelsToTry = provider.models;
+  }
+
+  let lastError = null;
+
+  for (let modelIdx = 0; modelIdx < modelsToTry.length; modelIdx++) {
+  // Prepare request body - deep clone to avoid mutating original
+  let body = JSON.parse(JSON.stringify(requestBody));
+  let selectedModelId = modelsToTry[modelIdx];
+
+  /**
+   * model=auto 或 tier-* 模式：使用当前尝试的模型
+   */
+  if (body.model === 'auto' || !body.model || body.model.startsWith('tier-')) {
+    body.model = selectedModelId;
+  }
+
+  // Get model limits and sanitize request body
+  const limits = getModelLimits(selectedModelId);
+  delete body.maxOutputTokens;
+  delete body.responseModalities;
+  delete body.safetySettings;
+  if (body.generationConfig) {
+    delete body.generationConfig.maxOutputTokens;
+  }
+
+  // Set max_tokens — respect user's value if lower than limit
+  if (body.max_tokens === undefined || body.max_tokens >= limits.output) {
+    body.max_tokens = limits.output;
+  }
+
+  const bodyStr = JSON.stringify(body);
+  if (modelIdx === 0) {
     console.log(`[Proxy] Using model limits: context=${limits.context}, output=${limits.output} for ${selectedModelId}`);
-    console.log(`[Proxy] DEBUG Forwarding body keys: ${Object.keys(body).join(', ')}`);
-    
-    const isStream = isStreaming(body);
-    
-    const options = {
-      hostname: parsedUrl.hostname,
-      port: parsedUrl.port || (isHttps ? 443 : 80),
-      path: parsedUrl.pathname,
+  }
+
+  const isStream = isStreaming(body);
+
+  const keyInfo = provider.totalKeys > 1 ? ` [key ${provider.keyIndex + 1}/${provider.totalKeys}]` : '';
+  const modelInfo = modelsToTry.length > 1 ? ` (model ${modelIdx + 1}/${modelsToTry.length}: ${selectedModelId})` : '';
+  console.log(`[Proxy] Trying provider: ${provider.key} (${provider.name})${keyInfo}${modelInfo} ${isStream ? '(streaming)' : ''}`);
+
+  try {
+    const response = await fetch(targetUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${provider.apiKey}`,
-        'Content-Length': Buffer.byteLength(bodyStr),
       },
-      timeout: PROVIDER_TIMEOUT,
-    };
-    
-    const keyInfo = provider.totalKeys > 1 ? ` [key ${provider.keyIndex + 1}/${provider.totalKeys}]` : '';
-    console.log(`[Proxy] Trying provider: ${provider.key} (${provider.name})${keyInfo} ${isStream ? '(streaming)' : ''}`);
-    
-    const req = client.request(options, (res) => {
-      // Check for error status even in streaming mode
-      if (res.statusCode >= 400) {
-        console.log(`[Proxy] ❌ ${provider.key} error (${res.statusCode}) in streaming mode`);
-        recordFailure(provider.key);
-        let errorData = '';
-        res.on('data', chunk => errorData += chunk);
-        res.on('end', () => {
-          reject({ status: res.statusCode, error: errorData, provider: provider.key });
-        });
-        return;
+      body: bodyStr,
+      signal: AbortSignal.timeout(PROVIDER_TIMEOUT),
+    });
+
+    // Handle HTTP errors (status >= 400)
+    if (!response.ok) {
+      console.log(`[Proxy] ❌ ${provider.key} error (${response.status}) for ${selectedModelId}`);
+      let errorData = '';
+      try { errorData = await response.text(); } catch {}
+      logRequest({ provider: provider.key, model: selectedModelId, latencyMs: Date.now() - startTime, success: false, tokensIn: 0, tokensOut: 0, requestModel: originalModel });
+
+      // 404/410 = model not found, try next model in same provider
+      if ((response.status === 404 || response.status === 410) && modelIdx < modelsToTry.length - 1) {
+        lastError = { status: response.status, error: `Model ${selectedModelId} not found`, provider: provider.key };
+        continue; // try next model
       }
+
+      if (response.status === 429) {
+        throw { status: 429, error: 'Rate limited', provider: provider.key };
+      }
+      throw { status: response.status, error: errorData || `HTTP ${response.status}`, provider: provider.key };
+    }
+    
+    // STREAMING MODE: forward chunks via SSE
+    if (isStream && onChunk) {
+      console.log(`[Proxy] ✅ ${provider.key} streaming started (${response.status})`);
+      recordSuccess(provider.key);
       
-      // STREAMING MODE: forward chunks directly
-      if (isStream && onChunk) {
-        console.log(`[Proxy] ✅ ${provider.key} streaming started (${res.statusCode})`);
-        recordSuccess(provider.key);
+      const extractor = new ThinkingExtractor();
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
         
-        const extractor = new ThinkingExtractor();
+        buffer += decoder.decode(value, { stream: true });
         
-        res.on('data', (chunk) => {
-          const chunkStr = chunk.toString();
-          // Ensure proper SSE format: lines must start with "data: " and end with "\n\n"
-          const lines = chunkStr.split('\n').filter(line => line.trim());
-          for (const line of lines) {
-            if (line.startsWith('data:')) {
-              const jsonPayload = line.substring(5).trim();
-              try {
-                const parsed = JSON.parse(jsonPayload);
-                if (parsed.choices && parsed.choices[0] && parsed.choices[0].delta) {
-                  const delta = parsed.choices[0].delta;
-                  const content = delta.content || '';
-                  
-                  // Extract thinking blocks from content
-                  const parts = extractor.processChunk(content);
-                  
-                  for (const part of parts) {
-                    const newDelta = { ...delta };
-                    if (part.type === 'thinking') {
-                      newDelta.reasoning_content = part.content;
-                      delete newDelta.content;
-                    } else {
-                      newDelta.content = part.content;
-                    }
-                    parsed.choices[0].delta = newDelta;
-                    onChunk('data: ' + JSON.stringify(parsed) + '\n\n', false, provider.key);
+        // Process complete lines from buffer, keep incomplete last line
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        const completeLines = lines.filter(line => line.trim());
+        
+        for (const line of completeLines) {
+          if (line.startsWith('data:')) {
+            const jsonPayload = line.substring(5).trim();
+            try {
+              const parsed = JSON.parse(jsonPayload);
+              if (parsed.choices && parsed.choices[0] && parsed.choices[0].delta) {
+                const delta = parsed.choices[0].delta;
+                const content = delta.content || '';
+                
+                // Extract thinking blocks from content
+                const parts = extractor.processChunk(content);
+                
+                for (const part of parts) {
+                  const newDelta = { ...delta };
+                  if (part.type === 'thinking') {
+                    newDelta.reasoning_content = part.content;
+                    delete newDelta.content;
+                  } else {
+                    newDelta.content = part.content;
                   }
-                } else {
-                  onChunk(line + '\n\n', false, provider.key);
+                  parsed.choices[0].delta = newDelta;
+                  onChunk('data: ' + JSON.stringify(parsed) + '\n\n', false, provider.key);
                 }
-              } catch {
+              } else {
                 onChunk(line + '\n\n', false, provider.key);
               }
-            } else {
-              // Wrap raw JSON lines in SSE format
-              onChunk('data: ' + line + '\n\n', false, provider.key);
+            } catch {
+              onChunk(line + '\n\n', false, provider.key);
             }
+          } else {
+            // Wrap raw JSON lines in SSE format
+            onChunk('data: ' + line + '\n\n', false, provider.key);
           }
-        });
-        
-        res.on('end', () => {
-          // Flush any remaining thinking content
-          const finalParts = extractor.flush();
-          for (const part of finalParts) {
-            if (part.type === 'thinking') {
-              const parsed = {
-                choices: [{
-                  delta: {
-                    reasoning_content: part.content
-                  }
-                }]
-              };
-              onChunk('data: ' + JSON.stringify(parsed) + '\n\n', false, provider.key);
-            } else if (part.content) {
-              const parsed = {
-                choices: [{
-                  delta: {
-                    content: part.content
-                  }
-                }]
-              };
-              onChunk('data: ' + JSON.stringify(parsed) + '\n\n', false, provider.key);
-            }
-          }
-          
-          onChunk(null, true, provider.key);
-          resolve({ status: res.statusCode, body: '', provider: provider.key, streaming: true });
-        });
-        
-        res.on('error', (err) => {
-          console.log(`[Proxy] ❌ ${provider.key} streaming error: ${err.message}`);
-          recordFailure(provider.key);
-          reject({ status: 0, error: err.message, provider: provider.key });
-        });
-        
-        return;
+        }
       }
       
-      // NON-STREAMING MODE: collect full response
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          console.log(`[Proxy] ✅ ${provider.key} succeeded (${res.statusCode})`);
-          recordSuccess(provider.key);
-          const cleanedData = cleanResponseBody(data);
-          resolve({ status: res.statusCode, body: cleanedData, provider: provider.key });
-        } else if (res.statusCode === 429) {
-          console.log(`[Proxy] ❌ ${provider.key} rate limited (429)`);
-          recordFailure(provider.key);
-          reject({ status: 429, error: 'Rate limited', provider: provider.key });
-        } else if (res.statusCode >= 500) {
-          console.log(`[Proxy] ❌ ${provider.key} server error (${res.statusCode})`);
-          recordFailure(provider.key);
-          reject({ status: res.statusCode, error: `Server error ${res.statusCode}`, provider: provider.key });
+      // Process any remaining data in buffer
+      if (buffer.trim()) {
+        const line = buffer.trim();
+        if (line.startsWith('data:')) {
+          onChunk(line + '\n\n', false, provider.key);
         } else {
-          console.log(`[Proxy] ❌ ${provider.key} HTTP error (${res.statusCode}): ${data.substring(0, 200)}`);
-          recordFailure(provider.key);
-          reject({ status: res.statusCode, error: `HTTP ${res.statusCode}`, provider: provider.key });
+          onChunk('data: ' + line + '\n\n', false, provider.key);
         }
-      });
-    });
+      }
+      
+      // Flush any remaining thinking content
+      const finalParts = extractor.flush();
+      for (const part of finalParts) {
+        if (part.type === 'thinking') {
+          const parsed = {
+            choices: [{ delta: { reasoning_content: part.content } }]
+          };
+          onChunk('data: ' + JSON.stringify(parsed) + '\n\n', false, provider.key);
+        } else if (part.content) {
+          const parsed = {
+            choices: [{ delta: { content: part.content } }]
+          };
+          onChunk('data: ' + JSON.stringify(parsed) + '\n\n', false, provider.key);
+        }
+      }
+      
+      onChunk(null, true, provider.key);
+      logRequest({ provider: provider.key, model: selectedModelId, latencyMs: Date.now() - startTime, success: true, tokensIn: estimateTokens(requestBody.messages), tokensOut: 0, requestModel: originalModel });
+      return { status: response.status, body: '', provider: provider.key, streaming: true };
+    }
     
-    req.on('error', (err) => {
-      console.log(`[Proxy] ❌ ${provider.key} network error: ${err.message}`);
-      recordFailure(provider.key);
-      reject({ status: 0, error: err.message, provider: provider.key });
-    });
+    // NON-STREAMING MODE: collect full response
+    const data = await response.text();
+    console.log(`[Proxy] ✅ ${provider.key} succeeded (${response.status})`);
+    recordSuccess(provider.key);
     
-    req.on('timeout', () => {
-      console.log(`[Proxy] ❌ ${provider.key} timeout`);
-      req.destroy();
-      recordFailure(provider.key);
-      reject({ status: 0, error: 'Timeout', provider: provider.key });
-    });
+    const cleanedData = cleanResponseBody(data);
+    // 尝试从响应中解析 token 用量
+    let tokensIn = 0;
+    let tokensOut = 0;
+    try {
+      const parsedResp = JSON.parse(data);
+      if (parsedResp.usage) {
+        tokensIn = parsedResp.usage.prompt_tokens || 0;
+        tokensOut = parsedResp.usage.completion_tokens || 0;
+      }
+    } catch {}
+    logRequest({ provider: provider.key, model: selectedModelId, latencyMs: Date.now() - startTime, success: true, tokensIn, tokensOut, requestModel: originalModel });
+    return { status: response.status, body: cleanedData, provider: provider.key };
     
-    req.write(bodyStr);
-    req.end();
-  });
+  } catch (error) {
+    // If error already has status property, it's our formatted error (HTTP error)
+    if (error.status !== undefined) {
+      // For 429 and other non-404 errors, throw immediately
+      if (error.status !== 404 && error.status !== 410) throw error;
+      // For 404/410, try next model
+      lastError = error;
+      continue;
+    }
+
+    // Network errors (ECONNRESET, DNS failures, timeouts)
+    const isTimeout = error instanceof DOMException && error.name === 'AbortError';
+    const errorMsg = isTimeout ? 'Timeout' : error.message;
+    console.log(`[Proxy] ❌ ${provider.key} network error: ${errorMsg}`);
+    recordFailure(provider.key);
+    logRequest({ provider: provider.key, model: selectedModelId, latencyMs: Date.now() - startTime, success: false, tokensIn: 0, tokensOut: 0, requestModel: originalModel });
+    throw { status: 0, error: errorMsg, provider: provider.key };
+  }
+  } // end for loop
+
+  // All models exhausted
+  if (lastError) throw lastError;
+  throw { status: 0, error: 'No models available', provider: provider.key };
 }
 
 /**
@@ -754,7 +810,7 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
     } catch (err) {
       console.log(`[Proxy] ${sessionId ? 'Sticky' : 'Active'} provider ${chosenProvider.key} failed, failover...`);
       errors.push({ provider: chosenProvider.key, error: err.error || err.message });
-      if (err.status === 429) setCooldown(chosenProvider.key, chosenProvider.apiKey, 60000);
+      if (err.status === 429) setCooldown(chosenProvider.key, chosenProvider.apiKey, RATE_LIMIT_COOLDOWN_MS);
       stats.providerUsage.set(chosenProvider.key, (stats.providerUsage.get(chosenProvider.key) || 0) + 1);
       if (!sessionId) activeProvider = null;
     }
@@ -798,7 +854,7 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
       }
     } catch (err) {
       errors.push({ provider: provider.key, error: err.error || err.message });
-      if (err.status === 429) setCooldown(provider.key, provider.apiKey, 60000);
+      if (err.status === 429) setCooldown(provider.key, provider.apiKey, RATE_LIMIT_COOLDOWN_MS);
       stats.providerUsage.set(provider.key, (stats.providerUsage.get(provider.key) || 0) + 1);
     }
   }
@@ -820,7 +876,7 @@ function createServer() {
     try {
       // CORS headers
       res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       
       if (req.method === 'OPTIONS') {
@@ -832,9 +888,7 @@ function createServer() {
       // Parse URL
       const reqUrl = new URL(req.url, 'http://127.0.0.1');
       const pathname = reqUrl.pathname;
-      const query = Object.fromEntries(reqUrl.searchParams);
-      // Compatible wrapper for admin handler
-      const parsedUrl = { pathname, query };
+      const parsedUrl = { pathname, query: Object.fromEntries(reqUrl.searchParams) };
     
     // Health check
     if (pathname === '/health' && req.method === 'GET') {
@@ -867,7 +921,6 @@ function createServer() {
         successful_requests: stats.successfulRequests,
         failed_requests: stats.failedRequests,
         provider_usage: Object.fromEntries(stats.providerUsage),
-        errors: Object.fromEntries(stats.errors),
       }));
       return;
     }
@@ -876,18 +929,32 @@ function createServer() {
     if (pathname === '/v1/chat/completions' && req.method === 'POST') {
       // Validate API key
       const authHeader = req.headers.authorization || '';
-      const apiKey = authHeader.replace('Bearer ', '').trim();
+      const apiKey = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : authHeader.trim();
       
-      if (apiKey !== getServerKey()) {
+      if (!timingSafeEqual(apiKey, getServerKey())) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Invalid API key' }));
         return;
       }
       
-      // Read body
+      // Read body (with size limit to prevent memory exhaustion)
       let body = '';
-      req.on('data', chunk => body += chunk);
+      let bodyDestroyed = false;
+      const MAX_PROXY_BODY = 1024 * 1024; // 1MB
+      req.on('data', chunk => {
+        if (bodyDestroyed) return;
+        body += chunk;
+        if (body.length > MAX_PROXY_BODY) {
+          bodyDestroyed = true;
+          req.destroy();
+          if (!res.headersSent) {
+            res.writeHead(413, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Request body too large' }));
+          }
+        }
+      });
       req.on('end', async () => {
+        if (bodyDestroyed) return;
         try {
           const requestBody = JSON.parse(body);
           const isStream = isStreaming(requestBody);
@@ -896,8 +963,7 @@ function createServer() {
             // STREAMING MODE: Try providers without sending headers first
             let providerName = 'unknown';
             let headersSent = false;
-            const chunkBuffer = [];
-            
+
             const onChunk = (chunk, isDone, provider) => {
               if (provider && providerName === 'unknown') {
                 providerName = provider;
@@ -928,11 +994,6 @@ function createServer() {
                     'Connection': 'keep-alive',
                     'X-Provider': providerName,
                   });
-                  // Flush any buffered chunks
-                  for (const buffered of chunkBuffer) {
-                    res.write(buffered);
-                  }
-                  chunkBuffer.length = 0;
                 }
                 res.write(chunk);
               }
@@ -942,17 +1003,21 @@ function createServer() {
               await handleChatCompletions(requestBody, onChunk);
             } catch (err) {
               console.log(`[Proxy] Streaming error: ${err.message}`);
-              if (!headersSent) {
-                headersSent = true;
-                res.writeHead(200, {
-                  'Content-Type': 'text/event-stream',
-                  'Cache-Control': 'no-cache',
-                  'Connection': 'keep-alive',
-                });
+              if (!res.writableEnded) {
+                if (!headersSent) {
+                  headersSent = true;
+                  res.writeHead(200, {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    'Connection': 'keep-alive',
+                  });
+                }
+                try {
+                  res.write('data: {"error":"All providers failed"}\n\n');
+                  res.write('data: [DONE]\n\n');
+                  res.end();
+                } catch {}
               }
-              res.write(`data: {"error": "All providers failed"}\n\n`);
-              res.write('data: [DONE]\n\n');
-              res.end();
             }
           } else {
             // NON-STREAMING MODE
@@ -973,7 +1038,7 @@ function createServer() {
           }
         } catch (err) {
           const isJsonError = err instanceof SyntaxError && err.message.includes('JSON');
-          res.writeHead(isJsonError ? 400 : 503, { 'Content-Type': 'application/json' });
+          res.writeHead(isJsonError ? 400 : 502, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             error: isJsonError ? 'Invalid request body' : 'All providers failed',
             message: isJsonError ? '请求体 JSON 格式错误' : 'All providers failed. Check your API keys.',
@@ -1032,12 +1097,16 @@ function createServer() {
       if (handled) return;
     }
     
-    // 404
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Not found' }));
+    // 404 — only if response hasn't been sent yet
+    if (!res.headersSent) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Not found' }));
+    }
     } catch (err) {
       console.error('[Proxy] Unhandled error:', err instanceof Error ? err.stack : String(err));
-      try { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Internal server error' })); } catch(e) {}
+      if (!res.headersSent) {
+        try { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Internal server error' })); } catch(e) {}
+      }
     }
   });
   

@@ -1,0 +1,76 @@
+# .github/workflows/test.yml
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20, 22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Check Node.js version (for node:sqlite support)
+        run: node -e "console.log('Node:', process.version); try { require('node:sqlite'); console.log('node:sqlite: ✓'); } catch(e) { console.warn('node:sqlite: ✗ (skip SQLite tests)'); }"
+
+      - name: Validate package.json
+        run: node -e "const p = require('./package.json'); console.log('Name:', p.name, '| Version:', p.version);"
+
+      - name: Lint check (syntax validation)
+        run: node -e "
+          const fs = require('fs'), path = require('path');
+          const src = fs.readdirSync('./src').filter(f => f.endsWith('.js'));
+          let errors = 0;
+          for (const f of src) {
+            try { require(path.resolve('./src/' + f)); console.log('  ✓ ' + f); } catch(e) {
+              if (e.code !== 'MODULE_NOT_FOUND' || !e.message.includes('node:sqlite')) {
+                console.error('  ✗ ' + f + ': ' + e.message); errors++;
+              } else {
+                console.log('  ~ ' + f + ' (skip: node:sqlite not available)');
+              }
+            }
+          }
+          console.log(errors ? 'FAIL: ' + errors + ' errors' : 'PASS');
+          process.exit(errors ? 1 : 0);
+        "
+
+      - name: Module integrity
+        run: |
+          echo "Checking module exports..."
+          node -e "
+            const checks = {
+              'config': ['loadConfig', 'getEnabledProviders', 'ENV_VARS', 'CONFIG_PATH'],
+              'models': ['MODELS', 'sources', 'getModelLimits'],
+              'sync': ['startSync'],
+            };
+            let ok = 0, fail = 0;
+            for (const [mod, exports] of Object.entries(checks)) {
+              try {
+                const m = require('./src/' + mod);
+                for (const ex of exports) {
+                  if (m[ex] !== undefined) ok++;
+                  else { console.log('  ✗ ' + mod + ' missing export: ' + ex); fail++; }
+                }
+              } catch(e) {
+                if (!e.message.includes('node:sqlite')) {
+                  console.log('  ✗ ' + mod + ': ' + e.message); fail++;
+                } else {
+                  console.log('  ~ ' + mod + ' (skip: node:sqlite)');
+                }
+              }
+            }
+            console.log(fail ? 'FAIL: ' + fail + ' missing' : 'PASS: ' + ok + ' exports verified');
+            process.exit(fail ? 1 : 0);
+          "

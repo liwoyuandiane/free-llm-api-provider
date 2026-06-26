@@ -7,7 +7,7 @@
  */
 
 const { getAllApiKeys } = require('./config');
-const { sources, ENV_VAR_NAMES } = require('./models');
+const { sources } = require('./models');
 
 // Constants
 const PING_TIMEOUT = 15000;
@@ -163,7 +163,7 @@ async function runHealthCheck(config) {
   const providerModels = new Map();
   
   for (const [providerKey, provider] of Object.entries(sources)) {
-    if (!provider.url || provider.cliOnly) continue;
+    if (!provider.url || provider.cliOnly || provider.zenOnly) continue;
     
     const keys = getAllApiKeys(config, providerKey);
     if (keys.length === 0) continue;
@@ -210,7 +210,7 @@ async function runHealthCheck(config) {
       if (!keyState) {
         keyState = {
           id: keyId,
-          apiKey: result.provider + '_key',
+          apiKey: result.keySuffix || 'unknown',
           latency: -1,
           status: 'unknown',
           lastCheck: 0,
@@ -224,12 +224,15 @@ async function runHealthCheck(config) {
         existing.keys.push(keyState);
       }
       
-      const isHealthy = result.status === 'up' || result.status === 'auth_error';
-      
-      if (isHealthy) {
+      // `up` = real success; `auth_error` = server reachable but key wrong (don't count as success)
+      const isUp = result.status === 'up';
+      const isReachable = isUp || result.status === 'auth_error';
+
+      if (isUp) {
         keyState.successes++;
         keyState.failures = Math.max(0, keyState.failures - 1);
-      } else {
+      } else if (!isReachable) {
+        // Only count true failures (offline/timeout/error), not auth_error
         keyState.failures++;
         keyState.successes = Math.max(0, keyState.successes - 1);
       }
@@ -274,7 +277,9 @@ async function runHealthCheck(config) {
     }
     
     // Calculate overall provider score (best key)
-    const bestKey = existing.keys.reduce((best, current) => current.score > best.score ? current : best, existing.keys[0]);
+    const bestKey = existing.keys.length > 0
+      ? existing.keys.reduce((best, current) => current.score > best.score ? current : best, existing.keys[0])
+      : null;
     existing.overallScore = bestKey ? bestKey.score : 0;
     existing.overallStatus = bestKey ? bestKey.status : 'unknown';
     
@@ -295,14 +300,20 @@ function startHealthChecker(config) {
 function getHealthyProviders() {
   const providers = [];
   for (const [key, state] of healthState.entries()) {
-    providers.push({ 
-      key, 
-      score: state.overallScore, 
+    const validKeys = state.keys.filter(k => k.avgLatency > 0);
+    const avgLatency = validKeys.length > 0
+      ? validKeys.reduce((sum, k) => sum + k.avgLatency, 0) / validKeys.length
+      : -1;
+    const latency = validKeys.length > 0
+      ? Math.min(...validKeys.map(k => k.avgLatency))
+      : -1;
+
+    providers.push({
+      key,
+      score: state.overallScore,
       status: state.overallStatus,
-      latency: state.keys.length > 0 ? Math.min(...state.keys.map(k => k.avgLatency > 0 ? k.avgLatency : Infinity)) : -1,
-      avgLatency: state.keys.length > 0 
-        ? state.keys.reduce((sum, k) => sum + (k.avgLatency > 0 ? k.avgLatency : 0), 0) / state.keys.filter(k => k.avgLatency > 0).length 
-        : -1,
+      latency,
+      avgLatency,
       quota: state.keys.length > 0 ? state.keys[0].quotaPercent : null,
       bestModel: state.bestModel,
       keys: state.keys.length,

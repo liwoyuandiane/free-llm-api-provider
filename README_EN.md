@@ -117,7 +117,8 @@ export OPENROUTER_API_KEY="your_key_here"
 ```
 
 **Where are keys stored?**
-- Config file: `~/.free-llm-api-provider.json` (outside project directory)
+- Config file: `.data/config.json` (inside project root)
+- Default port: `4002` (customize via `FLAP_PORT` or `PORT` env var)
 - Or via environment variables (env vars override config file)
 
 **Server API Key**: On first run, generates a cryptographically random API key (`sk-<64 hex chars>`) stored in SQLite database. Used by AI clients to connect to the proxy. Override with `FLAP_API_KEY` env var.
@@ -161,7 +162,7 @@ docker run -d \
 The API key is displayed when the proxy starts:
 ```
 ✅ Proxy started on http://localhost:4002
-   🔑 API Key:   sk-d8eca3465befb4a3d623ec30fceb202c4512f03c24632268a25a09d3489713e1
+   🔑 API Key:   sk-your-server-api-key (auto-generated on first run)
 ```
 
 Regenerate from admin UI (Settings tab) or via API:
@@ -220,7 +221,7 @@ flap test
 
 When the proxy is running, open **http://localhost:4002/admin** in your browser.
 
-On first visit, an auto-generated password is shown. Set a fixed password via `FLAP_ADMIN_PASSWORD` env var.
+Default credentials: `admin` / `admin123`. You'll be prompted to change the password on first login. Set a custom password via `FLAP_ADMIN_PASSWORD` env var.
 
 - **Providers tab**: Enable/disable providers, add/remove keys, test connections, discover models
 - **Models tab**: View 238 static models + discovered models, assign tiers, enable/disable
@@ -321,7 +322,7 @@ Use tier aliases: `tier-splus`, `tier-s`, `tier-aplus`, `tier-a`, `tier-aminus`,
 
 ## Config File
 
-Stored at `~/.free-llm-api-provider.json`:
+Stored at `.data/config.json`:
 
 ```json
 {
@@ -341,6 +342,37 @@ Stored at `~/.free-llm-api-provider.json`:
 1. Environment variables (highest)
 2. Config file keys
 3. Multiple keys (tries all before failing over)
+
+## Data Directory
+
+All runtime data (config file + SQLite database + backups) is stored in the `.data/` directory under the project root by default:
+
+```
+your-project/
+├── .data/            ← All runtime data
+│   ├── config.json   ← API keys and provider settings
+│   ├── data.db       ← SQLite database (keys, sessions, rate limits, etc.)
+│   └── backups/      ← Auto backups (up to 5 kept)
+├── src/
+├── ...
+```
+
+**Override with the `DATA_DIR` environment variable:**
+
+```bash
+# Linux / macOS
+export DATA_DIR=/path/to/my-data
+flap
+
+# Windows PowerShell
+$env:DATA_DIR = "D:\my-flap-data"
+flap
+
+# Docker (already mapped)
+docker run -e DATA_DIR=/app/data -v $(pwd):/app/data ...
+```
+
+When set, all data files (`config.json`, `data.db`) are saved to that directory. Useful for sharing config across projects or moving to a dedicated disk.
 
 ## Troubleshooting
 
@@ -387,7 +419,8 @@ This project integrates model data from multiple sources:
 
 Thanks to the following open-source projects for inspiration and data:
 
-- [litellm](https://github.com/BerriAI/litellm) — Community-driven model catalog with comprehensive model metadata (context windows, pricing, vision flags). The core data source for model sync.
+- [freellmapi](https://github.com/tashfeenahmed/freellmapi) — Minimalist API key rotation and proxy implementation that inspired this project's health-aware routing and high-availability design
+- [litellm](https://github.com/BerriAI/litellm) — Enterprise-grade LLM gateway with a community-driven model catalog providing comprehensive model metadata (context windows, pricing, vision flags). The core data source for model sync, and its architecture inspired advanced routing strategies.
 - [free-coding-models](https://github.com/alexjm19/free-coding-models) — Original reference for the static model catalog and tier classification.
 - [OpenRouter](https://openrouter.ai) — Excellent AI model aggregation platform that inspired model auto-discovery.
 - All free AI providers — NVIDIA, Groq, Cerebras, SambaNova, Replicate, DeepInfra and many more, providing valuable free AI compute for developers.

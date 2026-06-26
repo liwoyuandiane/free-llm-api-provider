@@ -8,8 +8,8 @@ services:
       - ./:/app/data
     environment:
       - DATA_DIR=/app/data
-      - FLAP_API_KEY=${FLAP_API_KEY:-sk-e66835d26643a81522644d779b6ae0db83092aef0a45c46d3bef7f3f4128bca8}
-      - FLAP_ADMIN_PASSWORD=${FLAP_ADMIN_PASSWORD:-834a0b03cc6b1a94}
+      - FLAP_API_KEY=${FLAP_API_KEY}
+      - FLAP_ADMIN_PASSWORD=${FLAP_ADMIN_PASSWORD}
       - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       - CEREBRAS_API_KEY=${CEREBRAS_API_KEY:-}

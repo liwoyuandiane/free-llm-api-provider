@@ -16,7 +16,7 @@ const readline = require('readline');
 const os = require('os');
 
 // Our internal modules
-const { loadConfig, saveConfig, getApiKey, isProviderEnabled, addApiKey, getEnabledProviders, ensureServerApiKey, getServerApiKey } = require('./config');
+const { loadConfig, saveConfig, getApiKey, isProviderEnabled, addApiKey, getEnabledProviders, ensureServerApiKey, getServerApiKey, CONFIG_PATH } = require('./config');
 const { sources, MODELS, ENV_VAR_NAMES, TIER_ORDER, getModelsByTier, getModelsByProvider, getApiProviders } = require('./models');
 const { startProxyServer, PROXY_PORT } = require('./proxy');
 const { startDashboard } = require('./status-dashboard');
@@ -128,7 +128,7 @@ Press Ctrl+C at any time to exit.
   // Save config
   const result = saveConfig(config);
   if (result.success) {
-    console.log('✅ Configuration saved to ~/.free-llm-api-provider.json');
+    console.log('✅ Configuration saved to ' + CONFIG_PATH);
   } else {
     console.error('❌ Failed to save config:', result.error);
   }
@@ -211,7 +211,7 @@ function showConfig() {
 ║           ${APP_NAME} - Configuration                         ║
 ╚══════════════════════════════════════════════════════════════╝
 
-Config file: ~/.free-llm-api-provider.json
+Config file: ${CONFIG_PATH}
 
 Enabled providers: ${enabled.length}
 `);
@@ -383,6 +383,21 @@ function writeLitellmConfig() {
 
 let proxyServer = null;
 
+// SIGINT 优雅关闭 — 确保 Ctrl+C 时服务器正常停止
+process.on('SIGINT', async () => {
+  console.log('\n⚠️ 正在关闭 free-llm-api-provider...');
+  if (proxyServer) {
+    proxyServer.close(() => {
+      console.log('✅ 代理已停止');
+      process.exit(0);
+    });
+    // 强制超时：2秒后强制退出
+    setTimeout(() => process.exit(1), 2000);
+  } else {
+    process.exit(0);
+  }
+});
+
 function isPortInUse(port) {
   const net = require('net');
   return new Promise(resolve => {
@@ -407,16 +422,14 @@ async function startProxy() {
   const enabled = getEnabledProviders(config);
   
   if (enabled.length === 0) {
-    console.log('❌ No providers configured.');
-    console.log('   Run: free-llm-api-provider --config');
-    return false;
+    console.log('⚠️  暂无配置的提供商，管理后台仍可访问以添加密钥。');
   }
-  
+
   if (await isPortInUse(PROXY_PORT)) {
     console.log(`⚠️  Port ${PROXY_PORT} already in use.`);
     return false;
   }
-  
+
   console.log(`📡 ${enabled.length} provider(s) configured:`);
   for (const key of enabled) {
     console.log(`   • ${sources[key]?.name || key}`);
@@ -447,7 +460,10 @@ async function stopProxy() {
     // Try to kill any process on the port
     try {
       if (process.platform === 'win32') {
-        execSync(`FOR /F "tokens=5" %a IN ('netstat -ano ^| findstr :${PROXY_PORT}') DO taskkill /F /PID %a`, { stdio: 'ignore' });
+        // PowerShell 兼容的端口进程查找和终止
+        try {
+          execSync(`netstat -ano | Select-String ":${PROXY_PORT} " | ForEach-Object { $_.ToString().TrimEnd() -split '\\s+' | Select-Object -Last 1 } | ForEach-Object { taskkill /F /PID $_ }`, { stdio: 'ignore', shell: 'powershell.exe' });
+        } catch { /* 无进程需要终止 */ }
       } else {
         execSync(`lsof -ti:${PROXY_PORT} | xargs -r kill -9 2>/dev/null || true`, { stdio: 'ignore' });
       }
@@ -722,9 +738,16 @@ Shortcuts (flap alias):
   flap restart                       Same as free-llm-api-provider restart
 
 Environment Variables:
-  You can also set API keys via environment variables:
+  API Keys (highest priority, overrides config file):
   NVIDIA_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, etc.
+  
+  Runtime:
+  DATA_DIR=<path>     Custom data directory (default: <project>/.data/)
+  FLAP_PORT=<port>    Proxy port (default: 4002, also reads PORT env var)
+  FLAP_API_KEY=<key>  Override server API key (must start with sk-)
+  FLAP_ADMIN_PASSWORD=<pw>  Set admin panel password
 
+Data Directory: ${path.dirname(CONFIG_PATH)}
 API Key: ${getKey()}
 Port: ${PROXY_PORT}
 `);
@@ -845,7 +868,8 @@ Make sure the proxy is running (flap / free-llm-api-provider).
   
   // --export-catalog / export-catalog (export static catalog to JSON)
   if (args.includes('--export-catalog') || firstArg === 'export-catalog') {
-    const path = args[args.indexOf('--output') + 1] || 'catalog.json';
+    const outputIndex = args.indexOf('--output');
+    const path = outputIndex !== -1 && outputIndex + 1 < args.length ? args[outputIndex + 1] : 'catalog.json';
     exportCatalog(path);
     process.exit(0);
   }
@@ -853,23 +877,16 @@ Make sure the proxy is running (flap / free-llm-api-provider).
   // Default: start proxy (no args or "start")
   if (args.length === 0 || firstArg === 'start') {
     // Auto-sync catalog on startup
-    syncCatalog().catch(() => {});
+    syncCatalog().catch(err => console.warn('[CLI] Catalog sync 失败:', err.message));
     
     const config = loadConfig();
     const enabled = getEnabledProviders(config);
     
     if (enabled.length === 0) {
       console.log(`
-❌ No API keys configured.
-
-Run the configuration wizard first:
-  free-llm-api-provider --config
-
-Or set environment variables:
-  export GROQ_API_KEY=your_key_here
-  export NVIDIA_API_KEY=your_key_here
+⚠️  没有配置 API 密钥。
+   启动管理后台，请通过 http://localhost:4002/admin 添加密钥。
 `);
-      process.exit(1);
     }
     
     const health = await checkHealth();

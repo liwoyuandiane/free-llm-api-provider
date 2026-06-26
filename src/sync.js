@@ -12,9 +12,10 @@
 const { DatabaseSync } = require('node:sqlite');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 
-const DB_DIR = process.env.DATA_DIR || path.join(os.homedir(), '.free-llm-api-provider');
+/** 项目根目录下的 .data 文件夹作为默认数据存储路径 */
+const DATA_DIR_DEFAULT = path.resolve(__dirname, '..', '.data');
+const DB_DIR = process.env.DATA_DIR || DATA_DIR_DEFAULT;
 const DB_PATH = path.join(DB_DIR, 'data.db');
 
 // litellm's community-maintained model catalog — updated almost daily
@@ -96,7 +97,7 @@ async function fetchCatalog(url) {
   try {
     // Support file:// URLs for local testing
     if (url.startsWith('file://')) {
-      const filePath = url.slice(7);
+      const filePath = path.resolve(url.slice(7).replace(/^\/([a-zA-Z]:)/, '$1'));
       if (fs.existsSync(filePath)) {
         const raw = fs.readFileSync(filePath, 'utf8');
         return JSON.parse(raw);
@@ -137,17 +138,19 @@ function applyLitellmCatalog(data) {
   const stats = {};
 
   try {
-    // Clear existing synced models for our providers
-    for (const ourKey of Object.values(PROVIDER_MAP)) {
+    db.exec('BEGIN');
+    // Clear existing synced models for our providers (deduplicate)
+    const uniqueProviders = [...new Set(Object.values(PROVIDER_MAP))];
+    for (const ourKey of uniqueProviders) {
       db.prepare('DELETE FROM sync_models WHERE provider = ?').run(ourKey);
     }
 
     const entries = Object.entries(data).filter(([k]) => k !== 'sample_spec');
-    
+
     for (const [modelId, info] of entries) {
       // Only import chat models
       if (info.mode && info.mode !== 'chat') continue;
-      
+
       const litellmProv = info.litellm_provider;
       const ourProvider = PROVIDER_MAP[litellmProv];
       if (!ourProvider) continue; // Unknown provider, skip
@@ -179,6 +182,7 @@ function applyLitellmCatalog(data) {
       } catch {}
     }
 
+    db.exec('COMMIT');
     db.close();
     setLastSync(Date.now());
     
@@ -191,6 +195,7 @@ function applyLitellmCatalog(data) {
     return true;
   } catch (err) {
     console.log('[Catalog] Apply litellm catalog failed:', err.message);
+    try { db.exec('ROLLBACK'); } catch {}
     try { db.close(); } catch {}
     return false;
   }

@@ -1,0 +1,56 @@
+# .github/workflows/release.yml
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Get version
+        id: get-version
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          PKG_VERSION=$(node -e "console.log(require('./package.json').version)")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "ERROR: Tag version ($TAG_VERSION) != package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+          echo "version=v$PKG_VERSION" >> $GITHUB_OUTPUT
+          echo "Version OK: v$PKG_VERSION"
+
+      - name: Validate modules
+        run: |
+          node -e "
+            const files = ['config', 'models', 'sync'];
+            for (const f of files) {
+              try { require('./src/' + f); console.log('  ✓ ' + f); }
+              catch(e) { if (!e.message.includes('node:sqlite')) { throw e; } else console.log('  ~ ' + f + ' (skip: node:sqlite)'); }
+            }
+          "
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ steps.get-version.outputs.version }}
+          body: |
+            ## free-llm-api-provider ${{ steps.get-version.outputs.version }}
+
+            查看 [AGENTS.md](./AGENTS.md) 了解详细变更。
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

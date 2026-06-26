@@ -114,7 +114,8 @@ export NVIDIA_API_KEY="你的key"
 ```
 
 **Key 存在哪里？**
-- 配置文件：`~/.free-llm-api-provider.json`（项目目录外）
+- 配置文件：`.data/config.json`（项目根目录下）
+- 默认端口：`4002`（可通过环境变量 `FLAP_PORT` 或 `PORT` 自定义）
 - 或环境变量（环境变量优先级更高）
 
 **服务器 API Key**：首次运行自动生成密码级随机 Key（`sk-<64位hex>`），存储在 SQLite 数据库。AI 客户端用它连接代理。可通过 `FLAP_API_KEY` 环境变量覆盖。
@@ -158,7 +159,7 @@ docker run -d \
 启动代理时会显示 API Key：
 ```
 ✅ Proxy started on http://localhost:4002
-   🔑 API Key:   sk-d8eca3465befb4a3d623ec30fceb202c4512f03c24632268a25a09d3489713e1
+   🔑 API Key:   sk-你的服务端 API Key（首次启动自动生成）
 ```
 
 也可以在管理后台（设置页）或通过 API 重新生成：
@@ -217,7 +218,7 @@ flap test
 
 代理运行后，浏览器打开 **http://localhost:4002/admin**
 
-首次访问会显示自动生成的密码，建议通过 `FLAP_ADMIN_PASSWORD` 环境变量设置固定密码。
+首次访问使用默认账号密码 `admin` / `admin123`，登录后会强制提示修改密码。也可通过 `FLAP_ADMIN_PASSWORD` 环境变量设置自定义密码。
 
 - **提供商页** — 启用/禁用提供商，添加/删除 API Key，测试连接，发现模型
 - **模型页** — 查看 238 个静态模型 + 自动发现的模型，设置等级，启用/禁用
@@ -320,7 +321,7 @@ Groq key 3 → 200 ✅  ← 停留在此直到失败
 
 ## 配置文件
 
-存储在 `~/.free-llm-api-provider.json`：
+存储在 `.data/config.json`：
 
 ```json
 {
@@ -340,6 +341,37 @@ Groq key 3 → 200 ✅  ← 停留在此直到失败
 1. 环境变量（最高）
 2. 配置文件 Key
 3. 多 Key 逐个尝试后再切换
+
+## 数据目录
+
+默认所有数据（配置文件 + SQLite 数据库 + 备份）都存储在项目根目录的 `.data/` 文件夹下：
+
+```
+your-project/
+├── .data/            ← 所有运行时数据
+│   ├── config.json   ← API Key 和提供商配置
+│   ├── data.db       ← SQLite 数据库（Key、会话、限流等）
+│   └── backups/      ← 自动备份（最多保留 5 份）
+├── src/
+├── ...
+```
+
+**通过 `DATA_DIR` 环境变量自定义路径：**
+
+```bash
+# Linux / macOS
+export DATA_DIR=/path/to/my-data
+flap
+
+# Windows PowerShell
+$env:DATA_DIR = "D:\my-flap-data"
+flap
+
+# Docker 容器（已自动映射）
+docker run -e DATA_DIR=/app/data -v $(pwd):/app/data ...
+```
+
+设置为自定义路径后，所有数据文件（`config.json`、`data.db`）都会存到该目录下，方便多项目共享配置或迁到独立磁盘。
 
 ## 常见问题
 
@@ -384,9 +416,10 @@ Groq key 3 → 200 ✅  ← 停留在此直到失败
 
 ## 致谢
 
-感谢以下开源项目对本文本项目的启发和帮助：
+感谢以下开源项目对本项目的启发和帮助：
 
-- [litellm](https://github.com/BerriAI/litellm) — 社区驱动的模型目录，提供了详尽的模型元数据（上下文窗口、定价、视觉支持等），是本项目模型同步功能的核心数据来源
+- [freellmapi](https://github.com/tashfeenahmed/freellmapi) — 极简的 API Key 轮换与代理实现，为本项目的健康感知路由和高可用设计提供了重要参考
+- [litellm](https://github.com/BerriAI/litellm) — 企业级 LLM 网关，社区驱动的模型目录提供了详尽的模型元数据（上下文窗口、定价、视觉支持等），是本项目模型同步功能的核心数据来源，其架构设计也启发了本项目的高级路由策略
 - [free-coding-models](https://github.com/alexjm19/free-coding-models) — 静态模型目录和等级分类的原始参考，为本项目初始 238 个模型提供了基础
 - [OpenRouter](https://openrouter.ai) — 优秀的 AI 模型聚合平台，提供了模型自动发现的参考实现
 - 所有免费 AI 提供商 — NVIDIA、Groq、Cerebras、SambaNova、Replicate、DeepInfra 等，为开发者提供了宝贵的免费 AI 算力

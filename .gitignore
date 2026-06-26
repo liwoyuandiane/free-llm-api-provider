@@ -2,6 +2,9 @@
 .env
 .env*
 
+# Local runtime data (config, keys, database)
+.data/
+
 # Node
 node_modules/
 
@@ -29,6 +32,10 @@ Thumbs.db
 
 # Internal prompt files
 *-prompt.md
+
+# Agent/Developer context files (project-specific, contains server paths)
+AGENTS.md
+CLAUDE.md
 
 # Docker generated configs
 litellm_proxy.yaml

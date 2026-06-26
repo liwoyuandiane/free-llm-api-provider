@@ -7,24 +7,37 @@
 const { loadConfig, saveConfig, addApiKey, removeApiKey, getAllApiKeys, getServerApiKey } = require('./config');
 const { sources, MODELS, getModelsByProvider } = require('./models');
 const { runHealthCheck, getHealthyProviders } = require('./health-checker');
-const { verifyAdminLogin, createSession, validateSession, deleteSession, getDiscoveredModels: dbGetDiscoveredModels, saveDiscoveredModels, getAllProviderKeys, addProviderKey, updateProviderKeyNotes, removeProviderKey, removeAllProviderKeys, setProviderEnabled, isProviderEnabled, regenerateServerApiKey, setModelEnabled, getAllModelStates, getCustomProviders, saveCustomProvider, deleteCustomProvider, setCustomProviderEnabled, getCustomProviderModels, saveCustomProviderModel, deleteCustomProviderModel, changeAdminPassword, changeAdminUsername, getAdminUsername, getProviderTestModel, setProviderTestModel, setModelTier, getAllModelTiers, getServerApiKey: dbGetServerApiKey } = require('./db');
+const { verifyAdminLogin, createSession, validateSession, deleteSession, getDiscoveredModels: dbGetDiscoveredModels, saveDiscoveredModels, getAllProviderKeys, addProviderKey, updateProviderKeyNotes, removeProviderKey, removeAllProviderKeys, setProviderEnabled, isProviderEnabled, regenerateServerApiKey, setModelEnabled, getAllModelStates, getCustomProviders, saveCustomProvider, deleteCustomProvider, setCustomProviderEnabled, getCustomProviderModels, saveCustomProviderModel, deleteCustomProviderModel, changeAdminPassword, changeAdminUsername, getAdminUsername, getProviderTestModel, setProviderTestModel, setModelTier, getAllModelTiers, getServerApiKey: dbGetServerApiKey, isUsingDefaultPassword, markPasswordChanged } = require('./db');
 
+/**
+ * getAdminInitialData — 获取管理面板初始数据
+ * 从 config.json 读取配置、API Key、启用提供商、模型状态等信息，供前端 HTML 页面使用
+ * @returns {object} 包含 allProviders, enabledProviders, apiKeys, modelStates, modelTiers, 
+ *   allStaticModels, testModels, serverApiKey, adminUsername 等字段的对象
+ */
 function getAdminInitialData() {
   const config = loadConfig();
   const allProviders = Object.entries(sources)
-    .filter(([_, v]) => v.url && !v.cliOnly)
+    .filter(([_, v]) => v.url && !v.cliOnly && !v.zenOnly)
     .map(([k, v]) => ({ key: k, name: v.name, url: v.url }));
   const serverApiKey = getServerApiKey(config);
   // Embed enabled states
   const enabledProviders = {};
   for (const [k, v] of Object.entries(sources)) {
-    if (v.url && !v.cliOnly) {
+    if (v.url && !v.cliOnly && !v.zenOnly) {
       try { enabledProviders[k] = isProviderEnabled(k); }
       catch { enabledProviders[k] = config.providers?.[k]?.enabled !== false; }
     }
   }
-  // Embed API keys (masked for safety)
-  const apiKeys = getAllProviderKeys();
+  // Embed API keys (masked for safety — full keys only via /api/admin/config)
+  const rawKeys = getAllProviderKeys();
+  const apiKeys = {};
+  for (const [prov, keys] of Object.entries(rawKeys)) {
+    apiKeys[prov] = (Array.isArray(keys) ? keys : [keys]).map(k => {
+      const ks = typeof k === 'string' ? k : (k.key || '');
+      return { key: ks.length > 12 ? ks.slice(0, 8) + '...' + ks.slice(-4) : ks, notes: typeof k === 'object' ? (k.notes || '') : '' };
+    });
+  }
   // Embed test models
   const testModels = {};
   for (const [k] of Object.entries(sources)) {
@@ -83,7 +96,8 @@ async function discoverProviderModels(providerKey, apiKey) {
       saveDiscoveredModels(providerKey, list);
     }
     return list;
-  } catch {
+  } catch (err) {
+    console.warn('[Admin] Discover models failed for ' + providerKey + ':', err.message);
     return [];
   }
 }
@@ -108,6 +122,11 @@ function readJsonBody(req) {
 // ============================================================================
 // Admin HTML page
 // ============================================================================
+/**
+ * getAdminHtml — 生成管理面板 HTML 页面
+ * 返回完整的管理面板前端 HTML，包含 CSS 样式、侧边栏导航、各功能页面和内联 JavaScript
+ * @returns {string} 完整的管理面板 HTML 字符串
+ */
 function getAdminHtml() {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -117,304 +136,192 @@ function getAdminHtml() {
 <title>free-llm-api-provider</title>
 <style>
   :root {
-    --bg: #0d1117;
-    --card: #161b22;
-    --hover: #1c2333;
-    --border: #30363d;
-    --b2: #21262d;
-    --text: #e6edf3;
-    --dim: #8b949e;
-    --mut: #6e7681;
-    --blue: #58a6ff;
-    --blue-bg: rgba(56,139,253,0.08);
-    --green: #3fb950;
-    --green-bg: rgba(63,185,80,0.08);
-    --red: #f85149;
-    --red-bg: rgba(248,81,73,0.08);
-    --yellow: #d29922;
-    --sidebar-w: 220px;
+    --bg: #0b0d13;
+    --card: #14171f;
+    --card-hover: #1a1e2a;
+    --border: #252a38;
+    --b2: #1e2230;
+    --text: #e8ecf4;
+    --text-secondary: #8b95b0;
+    --dim: #6b7590;
+    --mut: #4a5268;
+    --blue: #5b8aff;
+    --blue-bg: rgba(91,138,255,0.10);
+    --green: #34d399;
+    --green-bg: rgba(52,211,153,0.10);
+    --red: #f87171;
+    --red-bg: rgba(248,113,113,0.10);
+    --yellow: #fbbf24;
+    --yellow-bg: rgba(251,191,36,0.10);
+    --sidebar-w: 240px;
+    --font-sm: 14px;
+    --font-base: 16px;
+    --font-md: 18px;
+    --font-lg: 22px;
+    --font-xl: 26px;
+    --radius: 12px;
+    --radius-sm: 8px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.2);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.3);
+    --transition: 0.15s ease;
   }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body {
-    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-    background:var(--bg); color:var(--text);
-    font-size:15px; line-height:1.5;
-    -webkit-font-smoothing:antialiased;
+  .light {
+    --bg: #f8f9fc;
+    --card: #ffffff;
+    --card-hover: #f3f4f8;
+    --border: #e5e7ee;
+    --b2: #eef0f5;
+    --text: #1a1d28;
+    --text-secondary: #6b7280;
+    --dim: #9ca3af;
+    --mut: #c0c5d0;
+    --blue: #3b6ff5;
+    --blue-bg: rgba(59,111,245,0.07);
+    --green: #10b981;
+    --green-bg: rgba(16,185,129,0.07);
+    --red: #ef4444;
+    --red-bg: rgba(239,68,68,0.07);
+    --yellow: #eab308;
+    --yellow-bg: rgba(234,179,8,0.07);
+    --shadow: 0 1px 3px rgba(0,0,0,0.05);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.08);
   }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:var(--bg);color:var(--text);font-size:var(--font-base);line-height:1.7;-webkit-font-smoothing:antialiased}
 
-  /* Sidebar */
-  .side {
-    position:fixed; top:0; left:0; width:var(--sidebar-w); height:100vh;
-    background:var(--card); border-right:1px solid var(--border);
-    display:flex; flex-direction:column; z-index:50;
-  }
-  .side-head {
-    padding:20px 16px 14px; border-bottom:1px solid var(--border);
-    display:flex; align-items:center; gap:10px;
-  }
-  .side-head .d { width:10px; height:10px; border-radius:50%; background:var(--blue); }
-  .side-head h1 { font-size:16px; font-weight:700; letter-spacing:-0.3px; }
-  .side-nav { flex:1; padding:8px; overflow-y:auto; }
-  .side-nav button {
-    display:flex; align-items:center; gap:10px; width:100%;
-    padding:9px 12px; border:none; border-radius:6px;
-    background:transparent; color:var(--dim); font-size:14px;
-    cursor:pointer; transition:0.12s; text-align:left;
-  }
-  .side-nav button:hover { background:var(--hover); color:var(--text); }
-  .side-nav button.active { background:var(--blue-bg); color:var(--blue); font-weight:600; }
-  .side-nav .ni { width:18px; text-align:center; flex-shrink:0; font-size:15px; }
-  .side-nav .nb {
-    margin-left:auto; font-size:11px; padding:1px 8px; border-radius:10px;
-    background:var(--border); color:var(--dim);
-  }
-  .side-foot {
-    padding:12px 14px; border-top:1px solid var(--border);
-  }
-  .side-foot .kl {
-    font-size:10px; color:var(--mut); text-transform:uppercase;
-    letter-spacing:.6px; margin-bottom:6px;
-  }
-  .side-foot .kv {
-    font-family:'SF Mono','Fira Code',monospace; font-size:11px;
-    color:var(--dim); word-break:break-all;
-    background:var(--bg); padding:5px 8px; border-radius:4px;
-    border:1px solid var(--b2); margin-bottom:6px; line-height:1.4;
-  }
-  .side-foot .ka { display:flex; gap:6px; }
-  .side-foot .ka button {
-    flex:1; padding:5px; border:1px solid var(--border); border-radius:4px;
-    background:var(--bg); color:var(--dim); font-size:11px; cursor:pointer;
-  }
-  .side-foot .ka button:hover { background:var(--hover); color:var(--text); }
+  .side{position:fixed;top:0;left:0;width:var(--sidebar-w);height:100vh;background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;z-index:50}
+  .side-head{padding:24px 20px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px}
+  .side-head .logo{width:32px;height:32px;border-radius:10px;background:linear-gradient(135deg,#5b8aff,#a78bfa);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;color:#fff}
+  .side-head h1{font-size:var(--font-lg);font-weight:700;letter-spacing:-0.5px}
+  .side-nav{flex:1;padding:12px 10px;overflow-y:auto}
+  .side-nav button{display:flex;align-items:center;gap:14px;width:100%;padding:12px 16px;border:none;border-radius:var(--radius-sm);background:transparent;color:var(--text-secondary);font-size:var(--font-base);cursor:pointer;transition:var(--transition);text-align:left;margin-bottom:4px;font-weight:500}
+  .side-nav button:hover{background:var(--card-hover);color:var(--text)}
+  .side-nav button.active{background:var(--blue-bg);color:var(--blue);font-weight:600}
+  .side-nav .ni{width:22px;height:22px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
+  .side-nav .ni svg{width:20px;height:20px;fill:currentColor}
+  .side-nav .nb{margin-left:auto;font-size:var(--font-sm);padding:2px 10px;border-radius:12px;background:var(--b2);color:var(--dim);font-weight:600}
+  .side-foot{padding:16px 18px;border-top:1px solid var(--border)}
+  .side-foot .kl{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;font-weight:600}
+  .side-foot .kv{font-family:'SF Mono','Fira Code',Consolas,monospace;font-size:var(--font-sm);color:var(--dim);word-break:break-all;background:var(--bg);padding:8px 12px;border-radius:var(--radius-sm);border:1px solid var(--b2);margin-bottom:10px;line-height:1.5}
+  .side-foot .ka{display:flex;gap:8px}
+  .side-foot .ka button{flex:1;padding:8px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--text-secondary);font-size:var(--font-sm);cursor:pointer;transition:var(--transition)}
+  .side-foot .ka button:hover{background:var(--card-hover);color:var(--text)}
 
-  /* Main */
-  .main { flex:1; margin-left:var(--sidebar-w); min-height:100vh; padding:28px 32px; }
-  .page { display:none; }
-  .page.active { display:block; }
-  .pt { font-size:22px; font-weight:700; margin-bottom:4px; letter-spacing:-0.3px; }
-  .pd { color:var(--dim); font-size:14px; margin-bottom:24px; }
+  .main{flex:1;margin-left:var(--sidebar-w);min-height:100vh;padding:36px 40px;max-width:calc(100vw - var(--sidebar-w))}
+  .page{display:none}.page.active{display:block;animation:fadeSlideIn .2s ease}
+  @keyframes fadeSlideIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+  .pt{font-size:var(--font-xl);font-weight:700;margin-bottom:6px;letter-spacing:-0.5px}
+  .pd{color:var(--text-secondary);font-size:var(--font-base);margin-bottom:32px}
 
-  /* Cards */
-  .c {
-    background:var(--card); border:1px solid var(--border); border-radius:10px;
-    padding:18px 20px; margin-bottom:16px;
-  }
-  .ch {
-    display:flex; justify-content:space-between; align-items:center;
-    margin-bottom:14px; flex-wrap:wrap; gap:8px;
-  }
-  .ct { font-size:15px; font-weight:600; }
+  .c{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:24px 28px;margin-bottom:20px;box-shadow:var(--shadow)}
+  .ch{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;flex-wrap:wrap;gap:10px}
+  .ct{font-size:var(--font-md);font-weight:600;color:var(--text)}
 
-  /* Status dot */
-  .dot {
-    display:inline-block; width:8px; height:8px; border-radius:50%;
-    margin-right:6px; flex-shrink:0;
-  }
-  .dot.up { background:var(--green); box-shadow:0 0 6px var(--green); }
-  .dot.down,.dot.error { background:var(--red); }
-  .dot.unknown { background:var(--mut); }
-  .dot.auth_error,.dot.rate_limited { background:var(--yellow); }
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;flex-shrink:0;position:relative}
+  .dot.up{background:var(--green);box-shadow:0 0 6px var(--green)}
+  .dot.up::after{content:'';position:absolute;inset:0;border-radius:50%;animation:pulse 1.6s ease-out infinite;border:2px solid var(--green)}
+  @keyframes pulse{0%{transform:scale(1);opacity:1}100%{transform:scale(2.5);opacity:0}}
+  .dot.down,.dot.error{background:var(--red)}.dot.unknown{background:var(--mut)}.dot.auth_error,.dot.rate_limited{background:var(--yellow)}
 
-  /* Provider section */
-  .row {
-    background:var(--card); border:1px solid var(--border); border-radius:10px;
-    padding:16px 18px; margin-bottom:14px;
-  }
-  .row:last-child { margin-bottom:0; }
-  .pn {
-    font-weight:700; font-size:14px; display:flex; align-items:center; gap:8px;
-  }
-  .pi { display:flex; flex-direction:column; gap:8px; flex:1; min-width:0; }
-  .pi-top {
-    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
-    padding-bottom:8px; border-bottom:1px solid var(--b2);
-  }
-  .pi-status { font-size:12px; color:var(--dim); }
-  .pi-actions {
-    display:flex; align-items:center; gap:8px; margin-left:auto; flex-shrink:0;
-  }
-  .pi-actions .btn { white-space:nowrap; }
-  .pi-link {
-    font-size:11px; color:var(--dim); text-decoration:none;
-  }
-  .pi-link:hover { color:var(--text); }
-  .pi-count {
-    font-size:12px; color:var(--dim); margin-left:auto; white-space:nowrap;
-  }
+  .row{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:20px 24px;margin-bottom:16px;transition:var(--transition)}
+  .row:hover{box-shadow:var(--shadow-lg);border-color:var(--blue)}
+  .row:last-child{margin-bottom:0}
+  .pn{font-weight:700;font-size:var(--font-base);display:flex;align-items:center;gap:8px}
+  .pi{display:flex;flex-direction:column;gap:10px;flex:1;min-width:0}
+  .pi-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding-bottom:12px;border-bottom:1px solid var(--b2)}
+  .pi-status{font-size:var(--font-sm);color:var(--text-secondary)}
+  .pi-actions{display:flex;align-items:center;gap:8px;margin-left:auto;flex-shrink:0}
+  .pi-actions .btn{white-space:nowrap}
+  .pi-link{font-size:var(--font-sm);color:var(--dim);text-decoration:none;transition:var(--transition)}
+  .pi-link:hover{color:var(--text)}
+  .pi-count{font-size:var(--font-sm);color:var(--dim);margin-left:auto;white-space:nowrap}
 
-  /* Key list */
-  .kl { display:flex; flex-direction:column; gap:0; }
+  .kl{display:flex;flex-direction:column;gap:0}
+  .ke{display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--b2);font-size:var(--font-base)}
+  .ke:last-child{border-bottom:none}
+  .ke .kid{font-family:'SF Mono','Fira Code',Consolas,monospace;font-size:var(--font-sm);color:var(--dim);white-space:nowrap;min-width:160px}
+  .ke .kn{flex:1;color:var(--text);font-size:var(--font-base);min-width:0;cursor:pointer;padding:4px 8px;border-radius:var(--radius-sm);transition:var(--transition)}
+  .ke .kn:hover{background:var(--card-hover)}.ke .kn-empty{color:var(--mut);font-style:italic}
+  .ke .kt{font-size:var(--font-sm);color:var(--mut);white-space:nowrap}
+  .ke .ka{display:flex;gap:8px;flex-shrink:0}
+  .ke .ka button{padding:4px 12px;border:none;border-radius:var(--radius-sm);background:transparent;color:var(--dim);font-size:var(--font-sm);cursor:pointer;white-space:nowrap;transition:var(--transition)}
+  .ke .ka button:hover{color:var(--text);background:var(--card-hover)}
+  .ke .ka .ka-del:hover{color:var(--red)}.ke .ka .ka-edit{font-size:var(--font-base)}
+  .ke input.kn-input{flex:1;background:var(--bg);border:1px solid var(--blue);border-radius:var(--radius-sm);color:var(--text);font-size:var(--font-sm);padding:6px 10px;outline:none;min-width:0}
 
-  /* Key row */
-  .ke {
-    display:flex; align-items:center; gap:10px; padding:8px 0;
-    border-bottom:1px solid var(--b2); font-size:13px;
-  }
-  .ke:last-child { border-bottom:none; }
-  .ke .kid {
-    font-family:'SF Mono','Fira Code',monospace; font-size:12px;
-    color:var(--dim); white-space:nowrap; min-width:140px;
-  }
-  .ke .kn {
-    flex:1; color:var(--text); font-size:13px; min-width:0;
-    cursor:pointer; padding:2px 4px; border-radius:3px;
-  }
-  .ke .kn:hover { background:var(--hover); }
-  .ke .kn-empty { color:var(--mut); font-style:italic; }
-  .ke .kt {
-    font-size:11px; color:var(--mut); white-space:nowrap;
-  }
-  .ke .ka {
-    display:flex; gap:6px; flex-shrink:0;
-  }
-  .ke .ka button {
-    padding:2px 8px; border:none; border-radius:4px;
-    background:transparent; color:var(--dim); font-size:11px;
-    cursor:pointer; white-space:nowrap;
-  }
-  .ke .ka button:hover { color:var(--text); background:var(--hover); }
-  .ke .ka .ka-del:hover { color:var(--red); }
-  .ke .ka .ka-edit { font-size:13px; }
+  .btn{padding:9px 20px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--card);color:var(--text);cursor:pointer;font-size:var(--font-base);transition:var(--transition);font-weight:500}
+  .btn:hover{background:var(--card-hover);border-color:var(--dim)}
+  .btn-p{background:var(--blue);color:#fff;border-color:var(--blue);font-weight:600}
+  .btn-p:hover{opacity:.9}.btn-d{background:var(--red);color:#fff;border-color:var(--red)}.btn-d:hover{opacity:.9}
+  .btn-sm{padding:6px 14px;font-size:var(--font-sm)}
+  .bg{display:flex;gap:8px;flex-wrap:wrap}
 
-  /* Notes input (edit mode) */
-  .ke input.kn-input {
-    flex:1; background:var(--bg); border:1px solid var(--blue);
-    border-radius:4px; color:var(--text); font-size:12px;
-    padding:3px 6px; outline:none; min-width:0;
-  }
+  .tog{position:relative;width:40px;height:22px;display:inline-block;flex-shrink:0}
+  .tog input{opacity:0;width:0;height:0}
+  .tog .sl{position:absolute;inset:0;background:var(--border);border-radius:22px;transition:.2s ease;cursor:pointer}
+  .tog .sl::before{content:'';position:absolute;width:16px;height:16px;left:3px;bottom:3px;background:var(--text);border-radius:50%;transition:.2s ease}
+  .tog input:checked+.sl{background:var(--blue)}.tog input:checked+.sl::before{transform:translateX(18px)}
 
-  /* Buttons */
-  .btn {
-    padding:6px 14px; border-radius:6px; border:1px solid var(--border);
-    background:var(--card); color:var(--text); cursor:pointer;
-    font-size:13px; transition:0.12s;
-  }
-  .btn:hover { background:var(--hover); border-color:var(--dim); }
-  .btn-p { background:var(--blue); color:#fff; border-color:var(--blue); font-weight:500; }
-  .btn-p:hover { opacity:.9; }
-  .btn-d { background:var(--red); color:#fff; border-color:var(--red); }
-  .btn-d:hover { opacity:.9; }
-  .btn-sm { padding:4px 10px; font-size:12px; }
-  .bg { display:flex; gap:6px; flex-wrap:wrap; }
+  .fr{display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+  .fr label{font-size:var(--font-base);min-width:80px;color:var(--text-secondary);font-weight:500}
+  input,select,textarea{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;color:var(--text);font-size:var(--font-base);transition:var(--transition);font-family:inherit}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-bg)}
+  textarea{resize:vertical}
 
-  /* Toggle */
-  .tog { position:relative; width:34px; height:20px; display:inline-block; flex-shrink:0; margin-top:1px; }
-  .tog input { opacity:0; width:0; height:0; }
-  .tog .sl {
-    position:absolute; inset:0; background:var(--border);
-    border-radius:20px; transition:.2s; cursor:pointer;
-  }
-  .tog .sl::before {
-    content:''; position:absolute; width:14px; height:14px;
-    left:3px; bottom:3px; background:var(--text);
-    border-radius:50%; transition:.2s;
-  }
-  .tog input:checked + .sl { background:var(--blue); }
-  .tog input:checked + .sl::before { transform:translateX(14px); }
+  table{width:100%;border-collapse:collapse;font-size:var(--font-base)}
+  th{text-align:left;padding:12px 14px;border-bottom:2px solid var(--border);color:var(--text-secondary);font-weight:600;font-size:var(--font-sm);text-transform:uppercase;letter-spacing:.5px}
+  td{padding:11px 14px;border-bottom:1px solid var(--b2);vertical-align:middle}
+  tr:hover td{background:var(--card-hover)}
+  .ts{background:var(--bg);border:1px solid var(--b2);border-radius:var(--radius-sm);color:var(--text);font-size:var(--font-sm);padding:6px 10px}
 
-  /* Forms */
-  .fr { display:flex; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
-  .fr label { font-size:13px; min-width:70px; color:var(--dim); }
-  input,select,textarea {
-    background:var(--bg); border:1px solid var(--border); border-radius:6px;
-    padding:6px 10px; color:var(--text); font-size:13px;
-  }
-  input:focus,select:focus,textarea:focus { outline:none; border-color:var(--blue); }
-  textarea { resize:vertical; font-family:inherit; }
+  .hg{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
+  .hc{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;transition:var(--transition);box-shadow:var(--shadow)}
+  .hc:hover{border-color:var(--blue);box-shadow:var(--shadow-lg)}
+  .hc .nm{font-weight:600;font-size:var(--font-base);margin-bottom:10px;color:var(--text)}
+  .hc .sc{font-size:32px;font-weight:700;line-height:1;margin-bottom:8px}
+  .hc .sc.gd{color:var(--green)}.hc .sc.ok{color:var(--yellow)}.hc .sc.bd{color:var(--red)}
+  .hc .st{font-size:var(--font-sm);color:var(--text-secondary)}
 
-  /* Tables */
-  table { width:100%; border-collapse:collapse; font-size:13px; }
-  th {
-    text-align:left; padding:8px 10px; border-bottom:2px solid var(--border);
-    color:var(--dim); font-weight:600; font-size:11px;
-    text-transform:uppercase; letter-spacing:.5px;
-  }
-  td { padding:7px 10px; border-bottom:1px solid var(--b2); vertical-align:middle; }
-  tr:hover td { background:var(--hover); }
-  .ts {
-    background:var(--bg); border:1px solid var(--b2); border-radius:4px;
-    color:var(--text); font-size:12px; padding:3px 5px;
-  }
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px;margin-bottom:18px}
+  .stat-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow)}
+  .stat-card .lbl{font-size:var(--font-sm);color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;font-weight:600}
+  .stat-card .val{font-size:28px;font-weight:700;color:var(--text)}
 
-  /* Health cards */
-  .hg { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:10px; }
-  .hc {
-    background:var(--card); border:1px solid var(--border); border-radius:8px;
-    padding:14px 16px; transition:.12s;
-  }
-  .hc:hover { border-color:var(--mut); }
-  .hc .nm { font-weight:600; font-size:14px; margin-bottom:8px; }
-  .hc .sc { font-size:28px; font-weight:700; line-height:1; margin-bottom:6px; }
-  .hc .sc.gd { color:var(--green); }
-  .hc .sc.ok { color:var(--yellow); }
-  .hc .sc.bd { color:var(--red); }
-  .hc .st { font-size:12px; color:var(--dim); }
+  .toast{position:fixed;bottom:24px;right:24px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px 22px;font-size:var(--font-base);box-shadow:var(--shadow-lg);z-index:100;display:none;max-width:420px;animation:toastIn .3s ease}
+  @keyframes toastIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+  .toast.show{display:block}.toast.succ{border-color:var(--green);border-left:4px solid var(--green)}.toast.err{border-color:var(--red);border-left:4px solid var(--red)}
 
-  /* Stats cards */
-  .stat-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; margin-bottom:14px; }
-  .stat-card {
-    background:var(--card); border:1px solid var(--border); border-radius:8px;
-    padding:14px 16px;
-  }
-  .stat-card .lbl { font-size:11px; color:var(--dim); text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px; }
-  .stat-card .val { font-size:24px; font-weight:700; }
+  .load{display:inline-block;width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .6s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .empty{text-align:center;padding:56px 20px;color:var(--dim);font-size:var(--font-base)}
 
-  /* Toast */
-  .toast {
-    position:fixed; bottom:20px; right:20px;
-    background:var(--card); border:1px solid var(--border); border-radius:8px;
-    padding:10px 18px; font-size:13px;
-    box-shadow:0 8px 24px rgba(0,0,0,.5); z-index:100;
-    display:none; max-width:400px;
-  }
-  .toast.show { display:block; }
-  .toast.succ { border-color:var(--green); }
-  .toast.err { border-color:var(--red); }
+  .modal-o{position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:99;display:none;align-items:center;justify-content:center;backdrop-filter:blur(6px)}
+  .modal-o.show{display:flex}
+  .modal{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:32px;min-width:440px;max-width:90vw;max-height:80vh;overflow-y:auto;box-shadow:var(--shadow-lg);animation:fadeSlideIn .2s ease}
+  .modal h3{font-size:var(--font-lg);margin-bottom:16px}
 
-  .load {
-    display:inline-block; width:16px; height:16px;
-    border:2px solid var(--border); border-top-color:var(--blue);
-    border-radius:50%; animation:spin .6s linear infinite;
-  }
-  @keyframes spin { to{transform:rotate(360deg)} }
-  .empty { text-align:center; padding:40px 20px; color:var(--dim); font-size:14px; }
+  .pg-chat{display:flex;flex-direction:column;gap:12px;max-height:450px;overflow-y:auto;padding:8px 0}
+  .pg-msg{padding:16px 20px;border-radius:var(--radius);font-size:var(--font-base);line-height:1.7;white-space:pre-wrap}
+  .pg-msg.user{background:var(--blue-bg);border:1px solid rgba(91,138,255,0.15);align-self:flex-end;max-width:80%}
+  .pg-msg.assistant{background:var(--bg);border:1px solid var(--border)}
+  .pg-msg .pg-meta{font-size:var(--font-sm);color:var(--mut);margin-top:8px;padding-top:10px;border-top:1px solid var(--b2)}
+  .pg-inp{display:flex;gap:10px;margin-top:8px}
+  .pg-inp textarea{flex:1;min-height:56px;max-height:150px;font-size:var(--font-base)}
+  .pg-inp button{align-self:flex-end}
 
-  /* Modal */
-  .modal-o { position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:99; display:none; align-items:center; justify-content:center; }
-  .modal-o.show { display:flex; }
-  .modal {
-    background:var(--card); border:1px solid var(--border); border-radius:12px;
-    padding:24px; min-width:420px; max-width:90vw; max-height:80vh; overflow-y:auto;
-  }
-  .modal h3 { font-size:16px; margin-bottom:12px; }
+  ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}::-webkit-scrollbar-thumb:hover{background:var(--dim)}
 
-  /* Playground */
-  .pg-chat { display:flex; flex-direction:column; gap:10px; max-height:450px; overflow-y:auto; padding:4px 0; }
-  .pg-msg { padding:12px 16px; border-radius:8px; font-size:14px; line-height:1.6; white-space:pre-wrap; }
-  .pg-msg.user { background:var(--blue-bg); border:1px solid rgba(88,166,255,.15); align-self:flex-end; max-width:80%; }
-  .pg-msg.assistant { background:var(--bg); border:1px solid var(--border); }
-  .pg-msg .pg-meta { font-size:11px; color:var(--mut); margin-top:6px; padding-top:6px; border-top:1px solid var(--b2); }
-  .pg-inp { display:flex; gap:10px; margin-top:4px; }
-  .pg-inp textarea { flex:1; min-height:50px; max-height:130px; font-size:14px; }
-  .pg-inp button { align-self:flex-end; }
-
-  /* Scrollbar */
-  ::-webkit-scrollbar { width:6px; height:6px; }
-  ::-webkit-scrollbar-track { background:transparent; }
-  ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
-  ::-webkit-scrollbar-thumb:hover { background:var(--dim); }
-
-  @media (max-width:768px) {
-    :root { --sidebar-w: 52px; }
-    .side-head h1,.side-nav button span,.side-nav .nb,.side-foot .kl,.side-foot .kv,.side-foot .ka { display:none; }
-    .side-head { padding:12px; justify-content:center; }
-    .side-nav button { justify-content:center; padding:8px; }
-    .main { margin-left:52px; padding:16px; }
-    .hg,.stat-grid { grid-template-columns:1fr; }
-    .modal { min-width:unset; margin:10px; }
-    .ke { flex-direction:column; align-items:stretch; }
-    .ke .kid { min-width:auto; }
+  @media(max-width:768px){
+    :root{--sidebar-w:56px}
+    .side-head h1,.side-nav button span,.side-nav .nb,.side-foot .kl,.side-foot .kv,.side-foot .ka{display:none}
+    .side-head{padding:12px;justify-content:center}
+    .side-nav button{justify-content:center;padding:10px}
+    .side-nav .ni{width:24px;height:24px}
+    .main{margin-left:56px;padding:18px}
+    .hg,.stat-grid{grid-template-columns:1fr}
+    .modal{min-width:unset;margin:12px;padding:20px}
+    .ke{flex-direction:column;align-items:stretch}.ke .kid{min-width:auto}
+    .c{padding:16px 18px}
   }
 </style>
 </head>
@@ -422,20 +329,19 @@ function getAdminHtml() {
 <div class="app" style="display:flex">
   <!-- Sidebar -->
   <aside class="side">
-    <div class="side-head"><span class="d"></span><h1>flap</h1></div>
+    <div class="side-head"><span class="logo">F</span><h1>flap</h1></div>
     <nav class="side-nav" id="sideNav">
-      <button class="active" data-p="providers" onclick="sp('providers')"><span class="ni">⚡</span><span>提供商</span></button>
-      <button data-p="models" onclick="sp('models')"><span class="ni">⊞</span><span>模型</span><span class="nb" id="mb">238</span></button>
-      <button data-p="playground" onclick="sp('playground')"><span class="ni">▶</span><span>测试</span></button>
-      <button data-p="health" onclick="sp('health')"><span class="ni">♥</span><span>健康</span></button>
-      <button data-p="stats" onclick="sp('stats')"><span class="ni">📊</span><span>统计</span></button>
-      <button data-p="custom" onclick="sp('custom')"><span class="ni">+</span><span>自定义</span></button>
-      <button data-p="settings" onclick="sp('settings')"><span class="ni">⚙</span><span>设置</span></button>
+      <button class="active" data-p="providers" onclick="sp('providers')"><span class="ni"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4V4zm9 0h7v7h-7V4zM4 13h7v7H4v-7zm9 0h7v7h-7v-7z"/></svg></span><span>提供商</span></button>
+      <button data-p="models" onclick="sp('models')"><span class="ni"><svg viewBox="0 0 24 24"><path d="M21 3H3v18h18V3zm-2 16H5V5h14v14z"/><path d="M9 7h2v10H9V7zm4 0h2v10h-2V7z"/></svg></span><span>模型</span><span class="nb" id="mb"></span></button>
+      <button data-p="playground" onclick="sp('playground')"><span class="ni"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7L8 5z"/></svg></span><span>测试</span></button>
+      <button data-p="health" onclick="sp('health')"><span class="ni"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></span><span>健康</span></button>
+      <button data-p="stats" onclick="sp('stats')"><span class="ni"><svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg></span><span>统计</span></button>
+      <button data-p="settings" onclick="sp('settings')"><span class="ni"><svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1115.6 12 3.611 3.611 0 0112 15.6z"/></svg></span><span>设置</span></button>
     </nav>
     <div class="side-foot">
       <div class="kl">API Key</div>
       <div class="kv" id="serverKey">loading...</div>
-      <div class="ka"><button onclick="copyKey()">复制</button><button onclick="logout()" style="color:var(--red)">退出</button></div>
+      <div class="ka"><button onclick="copyKey()">复制</button><button onclick="logout()" style="color:var(--red)">退出</button><button onclick="themeToggle()" title="切换主题" style="flex:none;width:32px;padding:4px"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm0 16c-3.86 0-7-3.14-7-7s3.14-7 7-7 7 3.14 7 7-3.14 7-7 7z"/><path d="M12 7v10c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg></button></div>
     </div>
   </aside>
 
@@ -451,8 +357,13 @@ function getAdminHtml() {
       </div>
       <div class="c">
         <div class="ct" style="margin-bottom:10px">添加 API Key</div>
-        <div class="fr"><label>提供商</label><select id="nkp" style="flex:1"><option value="">选择...</option></select></div>
+        <div class="fr"><label>提供商</label><select id="nkp" style="flex:1" onchange="onNKPChange()"><option value="">选择...</option></select></div>
+        <div id="customProviderFields" style="display:none">
+          <div class="fr"><label>名称</label><input type="text" id="cpName" placeholder="任意名称" style="flex:1"></div>
+          <div class="fr"><label>URL</label><input type="text" id="cpUrl" placeholder="https://api.example.com/v1/chat/completions" style="flex:1"></div>
+        </div>
         <div class="fr"><label>Key</label><input type="password" id="nkv" placeholder="sk-..." style="flex:1"></div>
+        <div class="fr"><label>备注</label><input type="text" id="nkNotes" placeholder="可选备注" style="flex:1"></div>
         <button class="btn btn-p" onclick="aPK()">添加</button>
       </div>
     </div>
@@ -462,7 +373,7 @@ function getAdminHtml() {
       <div class="pt">模型目录</div>
       <div class="pd">启用/禁用模型，设置等级影响 tier 路由</div>
       <div class="c">
-        <div class="ch"><span class="ct">所有模型</span><span style="font-size:11px;color:var(--dim)" id="mc"></span></div>
+        <div class="ch"><span class="ct">所有模型</span><span style="font-size:13px;color:var(--dim)" id="mc"></span></div>
         <div style="overflow-x:auto">
         <table><thead><tr><th style="width:34px">启用</th><th>模型 ID</th><th>名称</th><th style="width:85px">等级</th><th>提供商</th><th style="width:50px">来源</th></tr></thead>
         <tbody id="mtb"></tbody></table>
@@ -488,7 +399,7 @@ function getAdminHtml() {
         </div>
         <div id="pgChat" class="pg-chat" style="min-height:200px;max-height:500px;overflow-y:auto;margin-bottom:10px"></div>
         <div class="pg-inp">
-          <textarea id="pgInput" placeholder="输入消息..." rows="2"></textarea>
+          <textarea id="pgInput" placeholder="输入消息... (Enter 发送, Ctrl+Enter 换行)" rows="2" onkeydown="if(event.key==='Enter'&&!event.ctrlKey&&!event.shiftKey){event.preventDefault();pgSend()}"></textarea>
           <button class="btn btn-p" onclick="pgSend()">发送</button>
         </div>
       </div>
@@ -514,42 +425,25 @@ function getAdminHtml() {
       </div>
     </div>
 
-    <!-- Page: Custom -->
-    <div class="page" id="p-custom">
-      <div class="pt">自定义提供商</div>
-      <div class="pd">添加私有或自建的 OpenAI 兼容 API</div>
-      <div class="c">
-        <div class="ch"><span class="ct">列表</span><button class="btn btn-sm" onclick="rCP()">刷新</button></div>
-        <div id="cpList"><p class="empty">暂无自定义提供商</p></div>
-      </div>
-      <div class="c">
-        <div class="ct" style="margin-bottom:10px">添加</div>
-        <div class="fr"><label>名称</label><input type="text" id="cpN" placeholder="my-proxy" style="flex:1"></div>
-        <div class="fr"><label>URL</label><input type="text" id="cpU" placeholder="https://api.example.com" style="flex:1"></div>
-        <div class="fr"><label>Key</label><input type="password" id="cpK" placeholder="可选" style="flex:1"></div>
-        <button class="btn btn-p" onclick="aCP()">添加</button>
-      </div>
-    </div>
-
     <!-- Page: Settings -->
     <div class="page" id="p-settings">
       <div class="pt">设置</div>
       <div class="pd">API Key 管理、密码修改</div>
       <div class="c">
         <div class="ct" style="margin-bottom:4px">重新生成 API Key</div>
-        <p style="font-size:12px;color:var(--dim);margin-bottom:10px">生成新 Key 后旧 Key 即时失效</p>
+        <p style="font-size:14px;color:var(--dim);margin-bottom:10px">生成新 Key 后旧 Key 即时失效</p>
         <button class="btn btn-d" onclick="rK()">重新生成</button>
       </div>
       <div class="c">
         <div class="ct" style="margin-bottom:4px">修改密码</div>
-        <p style="font-size:12px;color:var(--dim);margin-bottom:10px">修改管理员登录密码</p>
+        <p style="font-size:14px;color:var(--dim);margin-bottom:10px">修改管理员登录密码</p>
         <div class="fr"><label>当前</label><input type="password" id="curPw" placeholder="当前密码" style="flex:1"></div>
         <div class="fr"><label>新密码</label><input type="password" id="newPw" placeholder="至少6位" style="flex:1"></div>
         <button class="btn btn-p" onclick="cPw()">修改</button>
       </div>
       <div class="c">
         <div class="ct" style="margin-bottom:4px">修改用户名</div>
-        <p style="font-size:12px;color:var(--dim);margin-bottom:10px">当前用户名: <span id="curUser" style="font-weight:600"></span></p>
+        <p style="font-size:14px;color:var(--dim);margin-bottom:10px">当前用户名: <span id="curUser" style="font-weight:600"></span></p>
         <div class="fr"><label>新用户名</label><input type="text" id="newUser" placeholder="新用户名" style="flex:1"></div>
         <button class="btn btn-p" onclick="cU()">修改</button>
       </div>
@@ -563,24 +457,18 @@ function getAdminHtml() {
   <div class="modal"><h3>发现模型</h3><div id="dr"></div><div style="margin-top:12px;text-align:right"><button class="btn" onclick="cDM()">关闭</button></div></div>
 </div>
 
-<script id="initData" type="application/json">${JSON.stringify(getAdminInitialData())}</script>
+<script id="initData" type="application/json">${JSON.stringify(getAdminInitialData()).replace(/<\//g, '<\\/')}</script>
 <script>
-// Debug: show script is running
-document.getElementById('providerList').innerHTML = '<div style="padding:20px;color:#58a6ff">JS 已加载，正在初始化...</div>';
-
-window.onerror = function(msg, url, line) { 
-  document.getElementById('providerList').innerHTML = '<div style="padding:20px;color:#f85149">JS 错误: ' + msg + ' (行 ' + line + ')</div>';
-  console.error('JS Error:', msg, 'line:', line); 
-};
-window.addEventListener('unhandledrejection', function(e) { 
-  console.error('Unhandled Rejection:', e.reason); 
-});
 const A = '/api/admin';
 const TIERS = ['discovered','S+','S','A+','A','A-','B+','B','C'];
 
 // Read initial data embedded in the page (no server call needed!)
 const initData = JSON.parse(document.getElementById('initData').textContent);
 
+/**
+ * sp — 切换页面选项卡
+ * 点击侧边栏按钮时调用，显示对应页面并触发数据加载
+ */
 function sp(n) {
   document.querySelectorAll('.side-nav button').forEach(b=>b.classList.remove('active'));
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
@@ -589,14 +477,21 @@ function sp(n) {
   if(n==='models') rM();
   if(n==='health') rH();
   if(n==='stats') rS();
-  if(n==='custom') rCP();
   if(n==='providers') rP();
 }
 
+/**
+ * api — 调用管理后台 API
+ * @param {string} p - API 路径后缀
+ * @param {object} o - fetch 选项
+ * @returns {Promise<object>} 解析后的 JSON 响应
+ */
 async function api(p,o={}) {
-  const key=document.getElementById('serverKey').textContent;
+  // [Fix 2026-06-24] 移除硬编码 'sk-free-llm-api-provider' 字符串比对 — 之前 db.js 已修复硬编码默认值
+  const keyEl = document.getElementById('serverKey');
+  const key = keyEl ? keyEl.textContent : '';
   const h={'Content-Type':'application/json'};
-  if(key&&key!=='sk-free-llm-api-provider')h['Authorization']='Bearer '+key;
+  if(key && key.startsWith('sk-')) h['Authorization']='Bearer '+key;
   const opts={credentials:'same-origin',...o};
   opts.headers={...h,...(o.headers||{})};
   opts.body=opts.body?JSON.stringify(opts.body):undefined;
@@ -606,35 +501,71 @@ async function api(p,o={}) {
   const text=await r.text();
   try{return JSON.parse(text);}catch{return {};}
 }
+/**
+ * t — 显示 Toast 通知
+ * @param {string} m - 消息文本
+ * @param {string} tp - 类型：'succ' 或 'err'
+ */
 function t(m,tp='succ'){const e=document.getElementById('toast');e.textContent=m;e.className='toast show '+tp;clearTimeout(e._t);e._t=setTimeout(()=>e.classList.remove('show'),3000);}
+/**
+ * esc — HTML 转义，防止 XSS
+ * @param {*} s - 输入字符串
+ * @returns {string} 转义后的安全 HTML
+ */
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
-// Escape for JavaScript single-quoted string context (inline event handlers)
-  function jsesc(s){return String(s).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\\\'");}
-function copyKey(){const k=document.getElementById('serverKey').textContent;navigator.clipboard.writeText(k).then(()=>t('Key 已复制'));}
+/**
+ * jsesc — JavaScript 字符串转义（用于内联事件处理器）
+ * @param {*} s - 输入字符串
+ * @returns {string} 转义后的安全 JS 字符串
+ */
+function jsesc(s){return String(s).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\'").replace(/"/g,'\\\\u0022').replace(/\\\\n/g,'\\\\\\\\n').replace(/\\\\r/g,'\\\\\\\\r');}
+/**
+ * copyKey — 复制服务器 API Key 到剪贴板
+ */
+function copyKey(){const k=document.getElementById('serverKey').textContent;navigator.clipboard.writeText(k).then(()=>t('Key 已复制')).catch(()=>t('复制失败'));}
+/**
+ * logout — 登出管理后台，跳转到登录页
+ */
 function logout(){fetch('/api/admin/logout',{method:'POST'}).then(()=>window.location.href='/admin/login').catch(()=>window.location.href='/admin/login');}
 
+/**
+ * loadSK — 加载服务器 Key 和当前用户名到页面元素中
+ */
 async function loadSK(){
-  document.getElementById('serverKey').textContent = initData.serverApiKey || 'sk-free-llm-api-provider';
+  document.getElementById('serverKey').textContent = initData.serverApiKey || '(not configured)';
   const userEl = document.getElementById('curUser');
   if (userEl) userEl.textContent = initData.adminUsername || 'admin';
 }
 
-// Providers
+// ── 提供商页面 ──
+
+/**
+ * rP — 渲染提供商列表
+ * 获取配置、健康状态、测试模型后，渲染所有提供商的卡片布局
+ */
 async function rP() {
   const el = document.getElementById('providerList');
   if (!el) return;
+  // [Fix 2026-06-24] 启动时立即替换 loading 占位符，并添加错误显示调试信息
+  el.innerHTML = '<div class="empty" id="rpDebug">加载中…</div>';
   try {
-    el.innerHTML = '<div class="load" style="margin:24px auto"></div>';
-    // Fetch fresh data from server instead of stale initData
+    // 从服务端获取最新配置
     const cfg = await api('/config');
     const pr = cfg.allProviders || initData.allProviders || [];
     const em = cfg.enabledProviders || initData.enabledProviders || {};
+    // 从 API 获取完整 Key（initData 中的 Key 已掩码）
+    if (cfg.apiKeys) _fullKeyCache = cfg.apiKeys;
     const km = cfg.apiKeys || initData.apiKeys || {};
     const hl = await api('/health').catch(()=>({}));
     const hm = {}; if (hl.providers) for (const p of hl.providers) hm[p.key] = p;
-    // Fetch test models
+    // 获取测试模型配置
     const tm = cfg.testModels || initData.testModels || {};
-    el.innerHTML = pr.map(p => {
+    // 只渲染有 API Key 的提供商
+    const providersWithKeys = pr.filter(p => {
+      const ks = km[p.key] || [];
+      return (Array.isArray(ks) ? ks : [ks]).length > 0;
+    });
+    el.innerHTML = providersWithKeys.map(p => {
       const en = em[p.key] !== false;
       const ks = km[p.key] || [];
       const h = hm[p.key];
@@ -673,36 +604,113 @@ async function rP() {
             }).join('')) +
           '</div>' +
           '<div style="display:flex;gap:6px;align-items:center;margin-top:6px">' +
-            '<span style="font-size:11px;color:var(--mut)">测试模型:</span>' +
-            '<input type="text" value="' + esc(tm[p.key] || '') + '" placeholder="auto" style="flex:1;max-width:200px;font-size:11px;background:var(--bg);border:1px solid var(--b2);border-radius:4px;color:var(--text);padding:2px 6px" onchange="stm(\'' + jsesc(p.key) + '\',this.value)">' +
+            '<span style="font-size:13px;color:var(--mut)">测试模型:</span>' +
+            '<input type="text" value="' + esc(tm[p.key] || '') + '" placeholder="auto" style="flex:1;max-width:200px;font-size:13px;background:var(--bg);border:1px solid var(--b2);border-radius:4px;color:var(--text);padding:2px 6px" onchange="stm(\\'' + jsesc(p.key) + '\\',this.value)">' +
           '</div>' +
         '</div></div>';
     }).join('') || '<div class="empty">没有配置的提供商</div>';
     const sel = document.getElementById('nkp');
-    if (sel) sel.innerHTML = '<option value="">选择...</option>' + pr.map(p => '<option value="' + p.key + '">' + esc(p.name) + '</option>').join('');
+    if (sel) {
+      let opts = '<option value="">选择...</option>' + pr.map(p => '<option value="' + p.key + '">' + esc(p.name) + '</option>').join('');
+      // 底部固定显示"自定义供应商"选项
+      opts += '<option value="__custom__">自定义供应商</option>';
+      sel.innerHTML = opts;
+    }
+    // 更新侧边栏模型 badge
+    const mb = document.getElementById('mb');
+    if (mb) {
+      let total = 0;
+      for (const [k, v] of Object.entries(km)) {
+        if (Array.isArray(v) && v.length > 0) {
+          // 统计该提供商所有静态模型
+          total += (cfg.allStaticModels || []).filter(m => m[5] === k).length;
+        }
+      }
+      mb.textContent = total > 0 ? String(total) : '';
+    }
   } catch(e) {
-    el.innerHTML = '<div class="empty">加载失败: ' + e.message + '</div>';
-    console.error('rP error:', e.message, e.stack);
+    // [Fix 2026-06-24] 显示更详细的错误信息
+    el.innerHTML = '<div class="empty" style="color:var(--red)">加载失败: ' + (e?.message || e) + '<br><small style="color:var(--mut)">请按 F12 打开开发者工具查看 Network 标签</small></div>';
+    console.error('[rP] error:', e?.message, e?.stack);
+    t('加载失败: ' + (e?.message || e), 'err');
   }
 }
+/**
+ * togP — 切换提供商启用/禁用状态
+ * @param {string} k - 提供商 key
+ * @param {boolean} e - 是否启用
+ */
 async function togP(k,e){await api('/config',{method:'PUT',body:{toggleProvider:{key:k,enabled:e}}});t((e?'启用':'禁用')+' '+k);}
+/**
+ * tP — 测试提供商连接
+ * @param {string} k - 提供商 key
+ */
 async function tP(k){t('测试中...');const r=await api('/providers/'+k+'/test',{method:'POST'});t(r.success?(k+' ✅ '+r.latency+'ms'):(k+' ❌ '+(r.error||'失败')),r.success?'succ':'err');setTimeout(rP,2000);}
+/**
+ * dP — 发现提供商下的可用模型
+ * @param {string} k - 提供商 key
+ */
 async function dP(k){
   document.getElementById('discoverModal').classList.add('show');
   document.getElementById('dr').innerHTML='<p style="color:var(--dim)">查询中...</p>';
   const r=await api('/providers/'+k+'/discover',{method:'POST'}),ms=r.models||[];
-  document.getElementById('dr').innerHTML=ms.length===0?'<p style="color:var(--dim)">未发现模型</p>':'<p>发现 '+ms.length+' 个</p><table><thead><tr><th>ID</th><th>所有者</th></tr></thead><tbody>'+ms.map(m=>'<tr><td style="font-family:monospace;font-size:11px">'+esc(m.id)+'</td><td>'+esc(m.owned_by||'-')+'</td></tr>').join('')+'</tbody></table>';
+  document.getElementById('dr').innerHTML=ms.length===0?'<p style="color:var(--dim)">未发现模型</p>':'<p>发现 '+ms.length+' 个</p><table><thead><tr><th>ID</th><th>所有者</th></tr></thead><tbody>'+ms.map(m=>'<tr><td style="font-family:monospace;font-size:13px">'+esc(m.id)+'</td><td>'+esc(m.owned_by||'-')+'</td></tr>').join('')+'</tbody></table>';
 }
+/**
+ * cDM — 关闭发现模型模态框
+ */
 function cDM(){document.getElementById('discoverModal').classList.remove('show');}
-async function aPK(){const p=document.getElementById('nkp').value,k=document.getElementById('nkv').value;if(!p||!k){t('请选择提供商并输入Key','err');return;}await api('/provider-key',{method:'POST',body:{provider:p,key:k}});document.getElementById('nkv').value='';t('Key 已添加');rP();}
+/**
+ * aPK — 添加提供商 API Key
+ * 从下拉框和输入框中读取提供商和 Key 值，调用 API 添加
+ */
+/**
+ * aPK — 添加 API Key 或自定义供应商
+ * 选择"自定义供应商"时，创建自定义提供商 + 添加 Key
+ */
+async function aPK(){const p=document.getElementById('nkp').value,k=document.getElementById('nkv').value,n=document.getElementById('nkNotes').value;if(p==='__custom__'){const name=document.getElementById('cpName').value.trim();const url=document.getElementById('cpUrl').value.trim();if(!name||!url){t('请填写自定义供应商的名称和 URL','err');return;}if(!k){t('请填写 Key','err');return;}await api('/custom-provider',{method:'POST',body:{name,baseUrl:url,apiKey:k,notes:n}});document.getElementById('cpName').value='';document.getElementById('cpUrl').value='';document.getElementById('nkv').value='';document.getElementById('nkNotes').value='';t('自定义供应商已添加');rP();return;}if(!p||!k){t('请选择提供商并输入Key','err');return;}await api('/provider-key',{method:'POST',body:{provider:p,key:k,notes:n}});document.getElementById('nkv').value='';document.getElementById('nkNotes').value='';t('Key 已添加');rP();}
+/**
+ * onNKPChange — 选择自定义供应商时显示额外字段
+ */
+function onNKPChange(){const el=document.getElementById('customProviderFields');if(!el)return;el.style.display=document.getElementById('nkp').value==='__custom__'?'':'none';}
+/**
+ * stm — 设置提供商的测试模型
+ * @param {string} prov - 提供商 key
+ * @param {string} mid - 模型 ID（空值表示自动选择）
+ */
 async function stm(prov,mid){await api('/test-model',{method:'POST',body:{provider:prov,testModel:mid}});}
 
-// Per-key operations
-async function dk(prov,key){if(!confirm('删除此 Key?'))return;await api('/provider-key/delete',{method:'POST',body:{provider:prov,key}});t('Key 已删除');rP();}
-async function skn(prov,key,notes){await api('/provider-key/notes',{method:'POST',body:{provider:prov,key,notes}});}
-async function tsk(prov,key){t('测试中...');const r=await api('/provider-key/test',{method:'POST',body:{provider:prov,key}});t(r.success?'✅ '+r.latency+'ms':'❌ '+(r.error||'失败'),r.success?'succ':'err');rP();}
+// ── Key 级操作 ──
 
-// Notes editing
+/**
+ * dk — 删除指定提供商的 API Key
+ * @param {string} prov - 提供商 key
+ * @param {string} key - API Key（可以是掩码后的）
+ */
+async function dk(prov,key){const fk=_resolveKey(prov,key);if(!confirm('删除此 Key?'))return;await api('/provider-key/delete',{method:'POST',body:{provider:prov,key:fk}});t('Key 已删除');rP();}
+/**
+ * skn — 更新 API Key 的备注信息（内部自动解析完整 Key）
+ * @param {string} prov - 提供商 key
+ * @param {string} key - API Key（可以是掩码后的）
+ * @param {string} notes - 备注文本
+ */
+async function skn(prov,key,notes){const fk=_resolveKey(prov,key);await api('/provider-key/notes',{method:'POST',body:{provider:prov,key:fk,notes}});}
+/**
+ * tsk — 测试单个 API Key 的连接性
+ * @param {string} prov - 提供商 key
+ * @param {string} key - API Key（可以是掩码后的）
+ */
+async function tsk(prov,key){const fk=_resolveKey(prov,key);t('测试中...');const r=await api('/provider-key/test',{method:'POST',body:{provider:prov,key:fk}});t(r.success?'✅ '+r.latency+'ms':'❌ '+(r.error||'失败'),r.success?'succ':'err');rP();}
+
+// ── 备注编辑 ──
+
+/**
+ * edn — 启用备注内联编辑
+ * 将备注文本替换为可编辑输入框
+ * @param {HTMLElement} el - 被点击的备注元素
+ * @param {string} prov - 提供商 key
+ * @param {string} key - API Key
+ */
 function edn(el,prov,key){
   if(el.tagName==='INPUT')return;
   const cur=el.textContent==='添加备注...'?'':el.textContent;
@@ -715,11 +723,17 @@ function edn(el,prov,key){
   inp.focus();
   inp.select();
 }
+/**
+ * svkn — 保存备注内容到服务器
+ * @param {string} prov - 提供商 key
+ * @param {string} key - API Key
+ * @param {HTMLInputElement} inp - 输入框元素
+ */
 async function svkn(prov,key,inp){
   if(inp.dataset.cancel==='1'){inp.dataset.cancel='';ednRestore(inp,prov,key);return;}
   const val=inp.value.trim();
   await skn(prov,key,val);
-  // Update initData so re-renders show the new notes
+  // 更新 initData 以便下次渲染时显示新备注
   const km=initData.apiKeys||{};
   const pks=km[prov]||[];
   let found=false;
@@ -735,6 +749,12 @@ async function svkn(prov,key,inp){
   if(!found){pks.push({key,notes:val});}
   ednRestore(inp,prov,key);
 }
+/**
+ * ednRestore — 恢复备注编辑为只读文本
+ * @param {HTMLInputElement} inp - 输入框元素
+ * @param {string} prov - 提供商 key
+ * @param {string} key - API Key
+ */
 function ednRestore(inp,prov,key){
   const span=document.createElement('span');
   const km=initData.apiKeys||{};
@@ -750,19 +770,47 @@ function ednRestore(inp,prov,key){
   inp.replaceWith(span);
 }
 
-// Models
+// ── 模型页面 ──
+
+/**
+ * rM — 渲染模型列表
+ * 获取静态模型和发现模型，渲染带开关和分级下拉框的表格
+ */
 async function rM(){
-  const d=await api('/config'),sm=d.allStaticModels||[],disc=d.discoveredModels||[],ms=d.modelStates||{},mt=d.modelTiers||{};
+  const d=await api('/config'),sm=d.allStaticModels||[],disc=d.discoveredModels||[],ms=d.modelStates||{},mt=d.modelTiers||{},ak=d.apiKeys||{};
+  // 只显示已配置 API Key 的提供商的模型
+  const keyedProviders=new Set(Object.keys(ak).filter(k=>Array.isArray(ak[k])&&ak[k].length>0));
   const gk=m=>{const p=m.provider||m[5]||'',id=m.id||m[0]||'';return p?p+'/'+id:id;};
   const ie=m=>ms[gk(m)]!==false,gt=m=>mt[gk(m)]||m.tier||m[2]||'';
   const all=[...sm.map(m=>({id:m[0],name:m[1],tier:m[2],provider:m[5],source:'静态'})),...disc.map(m=>({id:m.id,name:m.id,tier:'discovered',provider:m.provider,source:'发现'}))];
-  document.getElementById('mc').textContent='共 '+all.length+' 个';
-  document.getElementById('mtb').innerHTML=all.map(m=>{const t=gt(m),en=ie(m),p=m.provider||m[5]||'';return '<tr><td><label class="tog"><input type="checkbox" '+(en?'checked':'')+' onchange="tM(\\''+jsesc(m.id||m[0])+'\\',\\''+jsesc(p)+'\\',this.checked)"><span class="sl"></span></label></td><td style="font-family:monospace;font-size:10.5px">'+esc(m.id||m[0])+'</td><td>'+esc(m.name||m[1])+'</td><td><select class="ts" onchange="sT(\\''+jsesc(m.id||m[0])+'\\',\\''+jsesc(p)+'\\',this.value)">'+TIERS.map(t2=>'<option value="'+t2+'" '+(t===t2?'selected':'')+'>'+t2+'</option>').join('')+'</select></td><td>'+esc(p)+'</td><td style="color:var(--dim)">'+m.source+'</td></tr>';}).join('');
+  const filtered=all.filter(m=>keyedProviders.has(m.provider));
+  // 更新侧边栏 badge
+  const badge=document.getElementById('mb');
+  if(badge) badge.textContent=filtered.length>0?String(filtered.length):'';
+  // 更新页眉文案
+  document.getElementById('mc').textContent=filtered.length>0?'已配置 '+filtered.length+' 个（共 '+all.length+'）':'暂无配置';
+  document.getElementById('mtb').innerHTML=filtered.length>0?filtered.map(m=>{const t=gt(m),en=ie(m),p=m.provider||m[5]||'';return '<tr><td><label class="tog"><input type="checkbox" '+(en?'checked':'')+' onchange="tM(\\''+jsesc(m.id||m[0])+'\\',\\''+jsesc(p)+'\\',this.checked)"><span class="sl"></span></label></td><td style="font-family:monospace;font-size:var(--font-sm)">'+esc(m.id||m[0])+'</td><td>'+esc(m.name||m[1])+'</td><td><select class="ts" onchange="sT(\\''+jsesc(m.id||m[0])+'\\',\\''+jsesc(p)+'\\',this.value)">'+TIERS.map(t2=>'<option value="'+t2+'" '+(t===t2?'selected':'')+'>'+t2+'</option>').join('')+'</select></td><td>'+esc(p)+'</td><td style="color:var(--dim)">'+m.source+'</td></tr>';}).join(''):'<tr><td colspan="6" class="empty">暂无模型，请先在「提供商」页签添加 API Key</td></tr>';
 }
+/**
+ * tM — 切换单个模型的启用/禁用状态
+ * @param {string} mid - 模型 ID
+ * @param {string} prov - 提供商
+ * @param {boolean} en - 是否启用
+ */
 async function tM(mid,prov,en){await api('/model-state',{method:'POST',body:{modelId:mid,provider:prov,enabled:en}});}
+/**
+ * sT — 设置模型的分级（tier）
+ * @param {string} mid - 模型 ID
+ * @param {string} prov - 提供商
+ * @param {string} t - 分级名称
+ */
 async function sT(mid,prov,t){await api('/model-tier',{method:'POST',body:{modelId:mid,provider:prov,tier:t}});}
 
-// Playground
+// ── Playground 测试页面 ──
+
+/**
+ * pgSend — 发送 Playground 聊天消息（支持流式和非流式）
+ */
 async function pgSend(){
   const inp=document.getElementById('pgInput'),chat=document.getElementById('pgChat');
   const msg=inp.value.trim();if(!msg)return;
@@ -779,36 +827,52 @@ async function pgSend(){
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
       body:JSON.stringify({model,messages:[{role:'user',content:msg}],stream,max_tokens:1024})
     });
+    const provider=resp.headers.get('X-Provider')||'unknown';
     if(!resp.ok){msgDiv.innerHTML='<span style="color:var(--red)">HTTP '+resp.status+'</span>';chat.scrollTop=chat.scrollHeight;return;}
-    
+
     if(stream){
       const reader=resp.body.getReader();const decoder=new TextDecoder();let done=false,buffer='';
       while(!done){const {value,done:dn}=await reader.read();done=dn;buffer+=decoder.decode(value||new Uint8Array(),{stream:!done});}
       const lines=buffer.split('\\n').filter(l=>l.startsWith('data:')&&l!=='data: [DONE]');
-      const contents=lines.map(l=>{try{const d=JSON.parse(l.slice(5));return d.choices?.[0]?.delta?.content||'';}catch{return '';}}).join('');
-      msgDiv.innerHTML=esc(contents||'(无内容)')+'<div class="pg-meta">流式: '+esc(model)+'</div>';
+      let streamError = '',streamModel='';
+      const contents=lines.map(l=>{try{const d=JSON.parse(l.slice(5));if(d.error) streamError = d.error;if(d.model) streamModel=d.model;return d.choices?.[0]?.delta?.content||'';}catch{return '';}}).join('');
+      if (streamError) msgDiv.innerHTML='<span style="color:var(--red)">'+esc(streamError)+'</span>';
+      else msgDiv.innerHTML=esc(contents||'(无内容)')+'<div class="pg-meta"><span style="color:var(--blue)">'+esc(provider)+'</span> · '+esc(streamModel||model)+'</div>';
     }else{
       const d=await resp.json();
       if(d.error) { msgDiv.innerHTML='<span style="color:var(--red)">'+esc(d.error)+'</span>'; }
       else {
         const c=d.choices?.[0]?.message?.content||'(无响应)';
-        msgDiv.innerHTML=esc(c)+'<div class="pg-meta">模型: '+esc(d.model||model)+'</div>';
+        msgDiv.innerHTML=esc(c)+'<div class="pg-meta"><span style="color:var(--blue)">'+esc(provider)+'</span> · '+esc(d.model||model)+'</div>';
       }
     }
   }catch(e){msgDiv.innerHTML='<span style="color:var(--red)">请求失败: '+esc(e.message)+'</span>';}
   chat.scrollTop=chat.scrollHeight;
 }
 
-// Health
+// ── 健康页面 ──
+
+/**
+ * rH — 渲染健康检查结果卡片网格
+ * 根据提供商评分（70+/40+）显示不同颜色状态
+ */
 async function rH(){
   const g=document.getElementById('healthGrid');g.innerHTML='<div class="load" style="margin:18px auto"></div>';
   const d=await api('/health'),pr=d.providers||[];
   if(!pr.length){g.innerHTML='<div class="empty">无数据，请先运行健康检查</div>';return;}
   g.innerHTML=pr.map(p=>{const cls=p.score>=70?'gd':(p.score>=40?'ok':'bd'),lat=p.avgLatency>0?Math.round(p.avgLatency)+'ms':'--';return '<div class="hc"><div class="nm"><span class="dot '+p.status+'"></span>'+esc(p.name)+'</div><div class="sc '+cls+'">'+p.score+'</div><div class="st">'+(p.status==='up'?'在线':p.status)+' · '+lat+'</div></div>';}).join('');
 }
+/**
+ * rHC — 手动触发一次健康检查
+ */
 async function rHC(){t('健康检查中...');await api('/health',{method:'POST'});t('完成');rH();}
 
-// Stats
+// ── 统计页面 ──
+
+/**
+ * rS — 渲染使用统计数据
+ * 显示总请求数、成功/失败数量、成功率和各提供商使用分布
+ */
 async function rS(){
   const el=document.getElementById('statsContent');el.innerHTML='<div class="load" style="margin:18px auto"></div>';
   try{
@@ -825,27 +889,116 @@ async function rS(){
   }catch(e){el.innerHTML='<div class="empty">无法获取统计: '+esc(e.message)+'</div>';}
 }
 
-// Custom Providers
-async function rCP(){
-  const d=await api('/custom-provider'),el=document.getElementById('cpList'),pr=d.providers||[];
-  if(!pr.length){el.innerHTML='<p class="empty">暂无自定义提供商</p>';return;}
-  el.innerHTML=pr.map(p=>{
-    const ms=p.models.map(m=>'<span class="kt" style="cursor:pointer" onclick="tM(\\''+jsesc(m.modelId)+'\\',\\''+jsesc(p.name)+'\\','+(!m.enabled)+');rCP()">'+esc(m.modelId)+(m.enabled?'':' ✕')+'</span>').join(' ');
-    return '<div class="row"><label class="tog"><input type="checkbox" '+(p.enabled?'checked':'')+' onchange="tc(\\''+jsesc(p.name)+'\\',this.checked)"><span class="sl"></span></label><div class="pi"><span class="pn">'+esc(p.name)+'</span><span class="kt">'+esc(p.base_url)+'</span></div><div style="margin:4px 0;width:100%">'+ms+'</div><button class="btn btn-sm btn-d" onclick="dc(\\''+jsesc(p.name)+'\\')">删除</button></div>';
-  }).join('');
-}
-async function aCP(){const n=document.getElementById('cpN').value.trim(),u=document.getElementById('cpU').value.trim(),k=document.getElementById('cpK').value.trim();if(!n||!u){t('请填写名称和URL','err');return;}await api('/custom-provider',{method:'POST',body:{name:n,baseUrl:u,apiKey:k}});document.getElementById('cpN').value='';document.getElementById('cpU').value='';document.getElementById('cpK').value='';t('已添加');rCP();rP();}
-async function tc(n,e){await api('/custom-provider/toggle',{method:'POST',body:{name:n,enabled:e}});}
-async function dc(n){await api('/custom-provider',{method:'DELETE',body:{name:n}});t('已删除');rCP();rP();}
+// ── 设置页面 ──
 
-// Settings
+/**
+ * rK — 重新生成服务器 API Key
+ */
 async function rK(){if(!confirm('确定重新生成 API Key？'))return;const r=await api('/key/regenerate',{method:'POST'});if(r.key){document.getElementById('serverKey').textContent=r.key;t('新 Key: '+r.key.slice(0,12)+'...');}}
+/**
+ * cPw — 修改管理员密码
+ */
 async function cPw(){const c=document.getElementById('curPw').value,p=document.getElementById('newPw').value;if(!c||!p){t('请填写所有字段','err');return;}if(p.length<6){t('至少6位','err');return;}const r=await api('/change-password',{method:'POST',body:{currentPassword:c,newPassword:p}});if(r.success){document.getElementById('curPw').value='';document.getElementById('newPw').value='';t('密码已修改');}else{t(r.error||'修改失败','err');}}
-async function cU(){const n=document.getElementById('newUser').value;if(!n){t('请输入新用户名','err');return;}if(n.length<2){t('用户名至少2位','err');return;}const r=await api('/change-username',{method:'POST',body:{newUsername:n}});if(r.success){document.getElementById('curUser').textContent=n;document.getElementById('newUser').value='';t('用户名已修改');}else{t(r.error||'修改失败','err');}}
+/**
+ * cU — 修改管理员用户名
+ */
+async function cU(){const n=document.getElementById('newUser').value;if(!n){t('请输入新用户名','err');return;}if(n.length<3||n.length>32){t('用户名长度 3-32 位','err');return;}if(!/^[a-zA-Z0-9_]+$/.test(n)){t('用户名只能包含字母、数字和下划线','err');return;}const r=await api('/change-username',{method:'POST',body:{newUsername:n}});if(r.success){document.getElementById('curUser').textContent=n;document.getElementById('newUser').value='';t('用户名已修改');}else{t(r.error||'修改失败','err');}}
+
+/**
+ * themeToggle — 切换深色/亮色主题
+ */
+function themeToggle(){const b=document.body;b.classList.toggle('light');localStorage.setItem('flapTheme',b.classList.contains('light')?'light':'dark');}
+
+// ── 全局缓存 ──
+
+/** initData 中的 Key 已掩码，需要从 API 获取完整 Key 用于操作 */
+let _fullKeyCache = {};
+
+/**
+ * _resolveKey — 从缓存中查找完整 API Key
+ * @param {string} prov - 提供商 key
+ * @param {string} maskedKey - 掩码后的 Key (sk-abc123...xyz9)
+ * @returns {string} 完整 Key
+ */
+function _resolveKey(prov, maskedKey) {
+  const keys = _fullKeyCache[prov] || [];
+  for (const k of (Array.isArray(keys) ? keys : [keys])) {
+    const ks = typeof k === 'string' ? k : (k.key || '');
+    const masked = ks.length > 12 ? ks.slice(0, 8) + '...' + ks.slice(-4) : ks;
+    if (masked === maskedKey) return ks;
+  }
+  return maskedKey; // fallback: 若未找到则用原值
+}
 
 // Init
-loadSK().then(()=>{rP();rCP();}).catch(()=>{setTimeout(()=>{rP();rCP();},2000);});
+// 恢复上次选择的主题
+if(localStorage.getItem('flapTheme')==='light')document.body.classList.add('light');
+// [Fix 2026-06-24] 立即同步填充 serverKey（不要等 async loadSK），避免一直显示 "loading..."
+(function initServerKey(){
+  const k = initData.serverApiKey;
+  if (k) document.getElementById('serverKey').textContent = k;
+})();
+if (initData.adminUsername) {
+  const userEl = document.getElementById('curUser');
+  if (userEl) userEl.textContent = initData.adminUsername;
+}
+loadSK().catch(err => console.warn('[Admin] loadSK 失败:', err));
+rP().catch(err => console.warn('[Admin] rP 失败:', err));
 document.addEventListener('keydown',e=>{if(e.key==='Escape')cDM();});
+
+// 检测默认密码提示
+if(new URLSearchParams(window.location.search).get('change_password')==='1'){
+  document.getElementById('changePwModal').classList.add('show');
+}
+</script>
+
+<!-- 修改密码弹窗（默认密码登录后强制显示） -->
+<div id="changePwModal" class="modal-o">
+  <div class="modal" style="min-width:380px;max-width:420px">
+    <h3>⚠️ 请修改默认密码</h3>
+    <p style="color:var(--text-secondary);margin-bottom:18px;font-size:var(--font-sm)">您正在使用默认密码登录，为了安全请立即修改。</p>
+    <div style="margin-bottom:10px">
+      <label style="font-size:var(--font-sm);color:var(--dim);display:block;margin-bottom:4px">当前密码</label>
+      <input id="cpwCur" type="password" value="admin123" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:var(--font-base)">
+    </div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:var(--font-sm);color:var(--dim);display:block;margin-bottom:4px">新密码（至少 6 位）</label>
+      <input id="cpwNew" type="password" placeholder="输入新密码" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:var(--font-base)">
+    </div>
+    <div style="margin-bottom:18px">
+      <label style="font-size:var(--font-sm);color:var(--dim);display:block;margin-bottom:4px">确认新密码</label>
+      <input id="cpwConfirm" type="password" placeholder="再次输入新密码" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:var(--font-base)">
+    </div>
+    <div id="cpwErr" style="color:var(--red);font-size:var(--font-sm);margin-bottom:12px;display:none"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button onclick="closeChangePwModal()" class="btn">稍后再说</button>
+      <button onclick="doChangeDefaultPw()" class="btn btn-p">确认修改</button>
+    </div>
+  </div>
+</div>
+<script>
+function closeChangePwModal(){document.getElementById('changePwModal').classList.remove('show');history.replaceState(null,'',location.pathname);}
+async function doChangeDefaultPw(){
+  const cur=document.getElementById('cpwCur').value;
+  const pw=document.getElementById('cpwNew').value;
+  const cf=document.getElementById('cpwConfirm').value;
+  const errEl=document.getElementById('cpwErr');
+  errEl.style.display='none';
+  if(!pw||pw.length<6){errEl.textContent='新密码至少 6 位';errEl.style.display='block';return;}
+  if(pw===cur){errEl.textContent='新密码不能与默认密码相同';errEl.style.display='block';return;}
+  if(pw!==cf){errEl.textContent='两次输入的密码不一致';errEl.style.display='block';return;}
+  const r=await fetch('/api/admin/change-password',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({currentPassword:cur,newPassword:pw})});
+  const d=await r.json();
+  if(d.success){
+    document.getElementById('changePwModal').classList.remove('show');
+    history.replaceState(null,'',location.pathname);
+  }else{
+    errEl.textContent=d.error||'修改失败';errEl.style.display='block';
+  }
+}
+// 回车提交
+document.getElementById('cpwNew').addEventListener('keydown',e=>{if(e.key==='Enter')doChangeDefaultPw();});
+document.getElementById('cpwConfirm').addEventListener('keydown',e=>{if(e.key==='Enter')doChangeDefaultPw();});
 </script>
 </body>
 </html>`;
@@ -859,6 +1012,11 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')cDM();});
 // Auth helpers
 // ============================================================================
 
+/**
+ * parseCookies — 解析 HTTP 请求中的 Cookie 头
+ * @param {import('http').IncomingMessage} req - HTTP 请求对象
+ * @returns {object} 键值对形式的 cookies
+ */
 function parseCookies(req) {
   const cookieHeader = req.headers.cookie || '';
   const cookies = {};
@@ -872,8 +1030,9 @@ function parseCookies(req) {
   return cookies;
 }
 
-function setSessionCookie(res, token) {
-  res.setHeader('Set-Cookie', `flap_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400`);
+function setSessionCookie(req, res, token) {
+  const isHttps = req.socket && req.socket.encrypted;
+  res.setHeader('Set-Cookie', `flap_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400${isHttps ? '; Secure' : ''}`);
 }
 
 function clearSessionCookie(res) {
@@ -881,8 +1040,10 @@ function clearSessionCookie(res) {
 }
 
 /**
- * Check if the request has a valid admin session.
- * Returns the session object if valid, null otherwise.
+ * checkAuth — 验证请求是否具有有效的管理员 Session
+ * 返回 session 对象（有效）或 null（无效）
+ * @param {import('http').IncomingMessage} req - HTTP 请求对象
+ * @returns {object|null} session 对象或 null
  */
 function checkAuth(req) {
   const cookies = parseCookies(req);
@@ -898,6 +1059,11 @@ function checkAuth(req) {
 // ============================================================================
 // Login page HTML
 // ============================================================================
+/**
+ * getLoginHtml — 生成登录页面 HTML
+ * @param {string} [error=''] - 可选的错误消息
+ * @returns {string} 登录页 HTML 字符串
+ */
 function getLoginHtml(error) {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -985,6 +1151,7 @@ async function handleGetCustomProviders(res) {
       name: p.name,
       base_url: p.base_url,
       api_key: p.api_key ? p.api_key.substring(0, 8) + '...' : '',
+      notes: p.notes || '',
       enabled: p.enabled === 1,
       created_at: p.created_at,
       models: models.map(m => ({ modelId: m.model_id, enabled: m.enabled === 1 })),
@@ -995,9 +1162,22 @@ async function handleGetCustomProviders(res) {
 
 async function handleSaveCustomProvider(req, res) {
   const body = await readJsonBody(req);
-  const { name, baseUrl, apiKey } = body;
+  const { name, baseUrl, apiKey, notes } = body;
   if (!name || !baseUrl) return jsonResponse(res, 400, { error: 'Missing name or baseUrl' });
-  saveCustomProvider(name, baseUrl, apiKey || '');
+  // Validate name format (alphanumeric, underscore, hyphen, dot)
+  if (!/^[a-zA-Z0-9_.\-]{1,64}$/.test(name)) {
+    return jsonResponse(res, 400, { error: '名称只能包含字母、数字、下划线、连字符和点，最长 64 位' });
+  }
+  // Validate URL protocol
+  try {
+    const parsed = new URL(baseUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return jsonResponse(res, 400, { error: 'URL 必须以 http:// 或 https:// 开头' });
+    }
+  } catch {
+    return jsonResponse(res, 400, { error: 'URL 格式无效' });
+  }
+  saveCustomProvider(name, baseUrl, apiKey || '', notes || '');
   jsonResponse(res, 200, { success: true });
 }
 
@@ -1045,6 +1225,7 @@ async function handleChangePassword(req, res) {
   if (!user) return jsonResponse(res, 403, { error: '当前密码错误' });
 
   changeAdminPassword(username, newPassword);
+  markPasswordChanged(username);
   jsonResponse(res, 200, { success: true, message: '密码已修改' });
 }
 
@@ -1053,7 +1234,8 @@ async function handleChangeUsername(req, res) {
   const body = await readJsonBody(req);
   const { newUsername } = body;
   if (!newUsername) return jsonResponse(res, 400, { error: 'Missing username' });
-  if (newUsername.length < 2) return jsonResponse(res, 400, { error: '用户名至少2位' });
+  if (newUsername.length < 3 || newUsername.length > 32) return jsonResponse(res, 400, { error: '用户名长度 3-32 位' });
+  if (!/^[a-zA-Z0-9_]+$/.test(newUsername)) return jsonResponse(res, 400, { error: '用户名只能包含字母、数字和下划线' });
 
   const oldUsername = (req._session && req._session.username) || 'admin';
 
@@ -1088,13 +1270,13 @@ async function handleSetModelTier(req, res) {
 async function handleGetConfig(res) {
   const config = loadConfig();
   const allProviders = Object.entries(sources)
-    .filter(([_, v]) => v.url && !v.cliOnly)
+    .filter(([_, v]) => v.url && !v.cliOnly && !v.zenOnly)
     .map(([k, v]) => ({ key: k, name: v.name, url: v.url }));
 
   // Build enabled providers map (use SQLite)
   const enabledProviders = {};
   for (const [k, v] of Object.entries(sources)) {
-    if (v.url && !v.cliOnly) {
+    if (v.url && !v.cliOnly && !v.zenOnly) {
       try { enabledProviders[k] = isProviderEnabled(k); }
       catch { enabledProviders[k] = config.providers?.[k]?.enabled !== false; }
     }
@@ -1160,12 +1342,12 @@ async function handleUpdateConfig(req, res) {
 
 async function handleAddProviderKey(req, res) {
   const body = await readJsonBody(req);
-  const { provider, key } = body;
+  const { provider, key, notes } = body;
   if (!provider || !key) {
     return jsonResponse(res, 400, { error: 'Missing provider or key' });
   }
   const config = loadConfig();
-  addApiKey(config, provider, key);
+  addApiKey(config, provider, key, notes);
   saveConfig(config);
   jsonResponse(res, 200, { success: true });
 }
@@ -1216,29 +1398,39 @@ async function handleTestSingleKey(req, res) {
   await runKeyTest(res, source.url, provider, key);
 }
 
+
+// [Fix 2026-06-24] 共享默认测试模型映射，供 "测试" 和 "检查" 两个按钮使用
+const DEFAULT_TEST_MODELS = {
+  nvidia: 'meta/llama-3.1-8b-instruct',
+  groq: 'llama-3.1-8b-instant',
+  cerebras: 'llama3.1-8b',
+  googleai: 'gemma-3-27b-it',
+  deepinfra: 'meta-llama/Meta-Llama-3.1-8B-Instruct',
+  codestral: 'codestral-latest',
+  zai: 'zai/glm-4.5-flash',
+  sambanova: 'Meta-Llama-3.1-8B-Instruct',
+  openrouter: 'meta-llama/llama-3.1-8b-instruct:free',
+  together: 'meta-llama/Llama-3.1-8B-Instruct-Turbo',
+  fireworks: 'accounts/fireworks/models/llama-v3-8b',
+  hyperbolic: 'meta-llama/Meta-Llama-3.1-8B-Instruct',
+  scaleway: 'llama-3.1-8b-instruct',
+  qwen: 'qwen2.5-coder-32b-instruct',
+  siliconflow: 'Qwen/Qwen2.5-Coder-32B-Instruct',
+  chutes: 'meta-llama/Meta-Llama-3.1-8B-Instruct',
+  iflow: 'qwen3-32b',
+  opencode: 'llama-3.1-8b-instant',
+};
+
 async function runKeyTest(res, url, provider, apiKey) {
-  // Default test models per provider (small/fast models)
-  const DEFAULT_TEST_MODELS = {
-    nvidia: 'meta/llama-3.1-8b-instruct',
-    groq: 'llama-3.1-8b-instant',
-    cerebras: 'llama3.1-8b',
-    googleai: 'gemma-3-27b-it',
-    deepinfra: 'meta-llama/Meta-Llama-3.1-8B-Instruct',
-    codestral: 'codestral-latest',
-    zai: 'zai/glm-4.5-flash',
-    sambanova: 'Meta-Llama-3.1-8B-Instruct',
-    openrouter: 'meta-llama/llama-3.1-8b-instruct:free',
-    together: 'meta-llama/Llama-3.1-8B-Instruct-Turbo',
-    fireworks: 'accounts/fireworks/models/llama-v3-8b',
-    hyperbolic: 'meta-llama/Meta-Llama-3.1-8B-Instruct',
-    scaleway: 'llama-3.1-8b-instruct',
-    qwen: 'qwen2.5-coder-32b-instruct',
-    siliconflow: 'Qwen/Qwen2.5-Coder-32B-Instruct',
-    chutes: 'meta-llama/Meta-Llama-3.1-8B-Instruct',
-    iflow: 'qwen3-32b',
-    opencode: 'llama-3.1-8b-instant',
-  };
-  const modelId = getProviderTestModel(provider) || DEFAULT_TEST_MODELS[provider] || 'gpt-3.5-turbo';
+  let modelId = getProviderTestModel(provider) || DEFAULT_TEST_MODELS[provider] || '';
+  // Fallback: use first model from provider's model list
+  if (!modelId) {
+    const models = getModelsByProvider(provider);
+    modelId = models.length > 0 ? models[0][0] : '';
+  }
+  if (!modelId) {
+    return jsonResponse(res, 200, { success: false, error: 'No test model configured for this provider' });
+  }
   const t0 = performance.now();
   try {
     const resp = await fetch(url, {
@@ -1282,8 +1474,8 @@ async function handleTestProvider(req, res, providerKey) {
     return jsonResponse(res, 400, { error: 'No API key configured' });
   }
 
-  // Use configured test model, or first model from catalog, or a generic test model
-  let modelId = getProviderTestModel(providerKey) || '';
+  // [Fix 2026-06-24] 使用共享的 DEFAULT_TEST_MODELS 兜底，避免 'gpt-3.5-turbo' 不匹配
+  let modelId = getProviderTestModel(providerKey) || DEFAULT_TEST_MODELS[providerKey] || '';
   if (!modelId) {
     const models = getModelsByProvider(providerKey);
     modelId = models.length > 0 ? models[0][0] : 'gpt-3.5-turbo';
@@ -1378,21 +1570,14 @@ function parseFormBody(req) {
   });
 }
 
-function parseJsonBody(req) {
-  return new Promise(resolve => {
-    let body = '';
-    let resolved = false;
-    const done = v => { if (!resolved) { resolved = true; resolve(v); } };
-    req.on('data', chunk => { body += chunk; if (body.length > MAX_BODY_SIZE) { req.destroy(); done({}); } });
-    req.on('end', () => { try { done(JSON.parse(body)); } catch { done({}); } });
-    req.on('error', () => done({}));
-    req.on('close', () => done({}));
-  });
-}
-
 // ============================================================================
-// Auth-protected route checker
-// ============================================================================
+/**
+ * requireAuth — 中间件：请求页面须经过身份验证
+ * 若验证通过则返回 session，否则返回 401 并显示登录页
+ * @param {import('http').IncomingMessage} req - HTTP 请求对象
+ * @param {import('http').ServerResponse} res - HTTP 响应对象
+ * @returns {object|null} session 对象或 null
+ */
 function requireAuth(req, res) {
   const session = checkAuth(req);
   if (session) return session;
@@ -1406,222 +1591,194 @@ function requireAuthApi(req, res) {
   // Accept session cookie OR server API key (for fetch() compatibility)
   const session = checkAuth(req);
   if (session) return session;
-  // Also check Bearer token against server API key
+  // Also check Bearer token against server API key (constant-time comparison)
   const auth = req.headers.authorization || '';
   if (auth.startsWith('Bearer ')) {
     const token = auth.slice(7).trim();
     try {
       const key = dbGetServerApiKey();
-      if (key && token === key) return { username: 'admin', auth: 'apikey' };
+      if (key && token.length === key.length) {
+        const crypto = require('crypto');
+        if (crypto.timingSafeEqual(Buffer.from(token), Buffer.from(key))) {
+          return { username: 'admin', auth: 'apikey' };
+        }
+      }
     } catch {}
   }
   jsonResponse(res, 401, { error: 'Unauthorized', message: '请先登录' });
   return null;
 }
 
-// ============================================================================
-// Route dispatcher
-// ============================================================================
+/**
+ * handleAdminRequest — 管理面板请求路由分发器
+ * 使用路由表模式替代 if-else 链，将路径-方法-处理三元组集中定义
+ * @param {URL} parsedUrl - 解析后的 URL 对象
+ * @param {import('http').IncomingMessage} req - HTTP 请求对象
+ * @param {import('http').ServerResponse} res - HTTP 响应对象
+ * @returns {Promise<boolean>} 是否已处理该请求（true = 已处理，false = 非本模块路由）
+ */
 async function handleAdminRequest(parsedUrl, req, res) {
   const path = parsedUrl.pathname;
+  const method = req.method;
 
-  // ---- Public routes (no auth required) ----
+  // ------------------------------------------------------------------
+  // 路由表辅助：匹配请求方法与路径
+  // ------------------------------------------------------------------
+  const match = (routeMethod, reqMethod, routePath) => {
+    if (routeMethod !== reqMethod) return false;
+    if (typeof routePath === 'string') return routePath === path;
+    if (routePath instanceof RegExp) return routePath.test(path);
+    return false;
+  };
 
-  // Login page
-  if (path === '/admin/login') {
-    // Already logged in? Redirect to admin
-    if (checkAuth(req)) {
-      res.writeHead(302, { 'Location': '/admin' });
-      res.end();
+  // ------------------------------------------------------------------
+  // 公用路由表（无需身份验证）
+  // ------------------------------------------------------------------
+  const publicRoutes = [
+    { method: 'GET', path: '/admin/login', handler: async () => {
+      // 已登录则重定向到管理面板
+      if (checkAuth(req)) {
+        res.writeHead(302, { 'Location': '/admin' }); res.end();
+        return true;
+      }
+      // POST 重定向到登录页自身
+      if (req.method === 'POST') {
+        res.writeHead(302, { 'Location': '/admin/login' }); res.end();
+        return true;
+      }
+      // 显示登录页（含错误提示）
+      const error = parsedUrl.query?.error ? '用户名或密码错误' : null;
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(getLoginHtml(error));
       return true;
-    }
-    // For POST, redirect to API handler
-    if (req.method === 'POST') {
-      res.writeHead(302, { 'Location': '/admin/login' });
-      res.end();
+    }},
+    { method: 'POST', path: '/api/admin/login', handler: async () => {
+      const ct = (req.headers['content-type'] || '').toLowerCase();
+      let username, password;
+      if (ct.includes('json')) {
+        const json = await readJsonBody(req);
+        username = json.username || 'admin';
+        password = json.password || '';
+      } else {
+        const form = await parseFormBody(req);
+        username = form.username || 'admin';
+        password = form.password || '';
+      }
+      const user = verifyAdminLogin(username, password);
+      if (user) {
+        const token = createSession(user.username);
+        setSessionCookie(req, res, token);
+        // 默认密码登录时在 URL 中标记，前端显示提醒弹窗（可关闭）
+        const redirect = isUsingDefaultPassword(user.username) ? '/admin?change_password=1' : '/admin';
+        res.writeHead(302, { 'Location': redirect }); res.end();
+      } else {
+        res.writeHead(302, { 'Location': '/admin/login?error=1' }); res.end();
+      }
       return true;
+    }},
+    { method: 'POST', path: '/api/admin/logout', handler: async () => {
+      const cookies = parseCookies(req);
+      if (cookies.flap_session) {
+        try { deleteSession(cookies.flap_session); } catch {}
+      }
+      clearSessionCookie(res);
+      res.writeHead(302, { 'Location': '/admin/login' }); res.end();
+      return true;
+    }},
+  ];
+
+  // 执行公用路由匹配
+  for (const route of publicRoutes) {
+    if (match(route.method, method, route.path)) {
+      return await route.handler();
     }
-    // Show login page (with error if redirected from failed login)
-    const error = parsedUrl.query?.error ? '用户名或密码错误' : null;
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(getLoginHtml(error));
-    return true;
   }
 
-  // Login API endpoint
-  if (path === '/api/admin/login' && req.method === 'POST') {
-    const ct = (req.headers['content-type'] || '').toLowerCase();
-    let username, password;
-    if (ct.includes('json')) {
-      const json = await parseJsonBody(req);
-      username = json.username || 'admin';
-      password = json.password || '';
-    } else {
-      const form = await parseFormBody(req);
-      username = form.username || 'admin';
-      password = form.password || '';
+  // ------------------------------------------------------------------
+  // 受保护页面路由（需身份验证）
+  // ------------------------------------------------------------------
+  const protectedPageRoutes = [
+    { methods: ['GET'], paths: ['/admin', '/admin/', '/admin/index.html'], handler: async () => {
+      const session = requireAuth(req, res);
+      if (!session) return true;
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(getAdminHtml());
+      return true;
+    }},
+  ];
+
+  for (const route of protectedPageRoutes) {
+    if (route.methods.includes(method) && route.paths.includes(path)) {
+      return await route.handler();
     }
-    const user = verifyAdminLogin(username, password);
-    if (user) {
-      const token = createSession(user.username);
-      setSessionCookie(res, token);
-      // Redirect to admin after successful login
-      res.writeHead(302, { 'Location': '/admin' });
-      res.end();
-    } else {
-      // For form POST, redirect back to login with error
-      res.writeHead(302, { 'Location': '/admin/login?error=1' });
-      res.end();
-    }
-    return true;
   }
 
-  // Logout API endpoint
-  if (path === '/api/admin/logout' && req.method === 'POST') {
-    const cookies = parseCookies(req);
-    if (cookies.flap_session) {
-      try { deleteSession(cookies.flap_session); } catch {}
-    }
-    clearSessionCookie(res);
-    res.writeHead(302, { 'Location': '/admin/login' });
-    res.end();
-    return true;
-  }
+  // ------------------------------------------------------------------
+  // Admin API 路由（需要 API 身份验证）
+  // ------------------------------------------------------------------
+  if (path.startsWith('/api/admin/')) {
+    const apiPath = path.slice('/api/admin'.length) || '/';
 
-  // ---- Protected routes (auth required) ----
-
-  // Serve admin HTML
-  if (path === '/admin' || path === '/admin/' || path === '/admin/index.html') {
-    const session = requireAuth(req, res);
+    const session = requireAuthApi(req, res);
     if (!session) return true;
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(getAdminHtml());
-    return true;
+    req._session = session;
+
+    try {
+      const apiRoutes = [
+        { method: 'GET',   path: '/config',              handler: () => handleGetConfig(res) },
+        { method: 'PUT',   path: '/config',              handler: () => handleUpdateConfig(req, res) },
+        { method: 'POST',  path: '/key/regenerate',      handler: () => handleRegenerateKey(res) },
+        { method: 'ALL',   path: '/health',              handler: () => handleHealth(req, res) },
+        { method: 'POST',  path: '/provider-key',        handler: () => handleAddProviderKey(req, res) },
+        { method: 'DELETE',path: '/provider-key',        handler: () => handleRemoveProviderKey(req, res) },
+        { method: 'POST',  path: '/provider-key/delete', handler: () => handleRemoveSingleProviderKey(req, res) },
+        { method: 'POST',  path: '/provider-key/notes',  handler: () => handleUpdateKeyNotes(req, res) },
+        { method: 'POST',  path: '/provider-key/test',   handler: () => handleTestSingleKey(req, res) },
+        { method: 'POST',  path: '/model-state',         handler: () => handleModelState(req, res) },
+        { method: 'POST',  path: '/test-model',          handler: () => handleSetTestModel(req, res) },
+        { method: 'POST',  path: '/model-tier',          handler: () => handleSetModelTier(req, res) },
+        { method: 'GET',   path: '/custom-provider',     handler: () => handleGetCustomProviders(res) },
+        { method: 'POST',  path: '/custom-provider',     handler: () => handleSaveCustomProvider(req, res) },
+        { method: 'DELETE',path: '/custom-provider',     handler: () => handleDeleteCustomProvider(req, res) },
+        { method: 'POST',  path: '/custom-provider/delete', handler: () => handleDeleteCustomProvider(req, res) },
+        { method: 'POST',  path: '/custom-provider/toggle', handler: () => handleToggleCustomProvider(req, res) },
+        { method: 'POST',  path: '/custom-provider/model',  handler: () => handleAddCustomProviderModel(req, res) },
+        { method: 'DELETE',path: '/custom-provider/model',  handler: () => handleDeleteCustomProviderModel(req, res) },
+        { method: 'POST',  path: '/custom-provider/model/delete', handler: () => handleDeleteCustomProviderModel(req, res) },
+        { method: 'POST',  path: '/change-password',     handler: () => handleChangePassword(req, res) },
+        { method: 'POST',  path: '/change-username',     handler: () => handleChangeUsername(req, res) },
+      ];
+
+      // 精确路径匹配
+      for (const route of apiRoutes) {
+        const methodOk = route.method === 'ALL' || route.method === method;
+        if (methodOk && route.path === apiPath) {
+          return await route.handler();
+        }
+      }
+
+      // 动态路由：/providers/:key/test, /providers/:key/discover
+      const testMatch = apiPath.match(/^\/providers\/([\w-]+)\/test$/);
+      if (testMatch && method === 'POST') {
+        await handleTestProvider(req, res, testMatch[1]);
+        return true;
+      }
+      const discoverMatch = apiPath.match(/^\/providers\/([\w-]+)\/discover$/);
+      if (discoverMatch && method === 'POST') {
+        await handleDiscoverModels(req, res, discoverMatch[1]);
+        return true;
+      }
+
+      jsonResponse(res, 404, { error: 'Admin API endpoint not found' });
+      return true;
+    } catch (err) {
+      console.error('[Admin] Error:', err.message);
+      jsonResponse(res, 500, { error: err.message });
+      return true;
+    }
   }
 
-  // Admin API routes
-  if (!path.startsWith('/api/admin/')) return false;
-
-  const apiPath = path.slice('/api/admin'.length) || '/';
-
-  // Require auth for all API endpoints (except login which is handled above)
-  const session = requireAuthApi(req, res);
-  if (!session) return true;
-  req._session = session;
-
-  try {
-    if (apiPath === '/config' && req.method === 'GET') {
-      await handleGetConfig(res);
-      return true;
-    }
-    if (apiPath === '/config' && req.method === 'PUT') {
-      await handleUpdateConfig(req, res);
-      return true;
-    }
-    if (apiPath === '/key/regenerate' && req.method === 'POST') {
-      await handleRegenerateKey(res);
-      return true;
-    }
-    if (apiPath === '/health' && (req.method === 'GET' || req.method === 'POST')) {
-      await handleHealth(req, res);
-      return true;
-    }
-    if (apiPath === '/provider-key' && req.method === 'POST') {
-      await handleAddProviderKey(req, res);
-      return true;
-    }
-    if (apiPath === '/provider-key' && req.method === 'DELETE') {
-      await handleRemoveProviderKey(req, res);
-      return true;
-    }
-    if (apiPath === '/provider-key/delete' && req.method === 'POST') {
-      await handleRemoveSingleProviderKey(req, res);
-      return true;
-    }
-    if (apiPath === '/provider-key/notes' && req.method === 'POST') {
-      await handleUpdateKeyNotes(req, res);
-      return true;
-    }
-    if (apiPath === '/provider-key/test' && req.method === 'POST') {
-      await handleTestSingleKey(req, res);
-      return true;
-    }
-
-    // Model state toggle
-    if (apiPath === '/model-state' && req.method === 'POST') {
-      await handleModelState(req, res);
-      return true;
-    }
-
-    // Test model configuration
-    if (apiPath === '/test-model' && req.method === 'POST') {
-      await handleSetTestModel(req, res);
-      return true;
-    }
-
-    // Model tier assignment
-    if (apiPath === '/model-tier' && req.method === 'POST') {
-      await handleSetModelTier(req, res);
-      return true;
-    }
-
-    // Custom provider management
-    if (apiPath === '/custom-provider' && req.method === 'GET') {
-      await handleGetCustomProviders(res);
-      return true;
-    }
-    if (apiPath === '/custom-provider' && req.method === 'POST') {
-      await handleSaveCustomProvider(req, res);
-      return true;
-    }
-    if (apiPath === '/custom-provider' && req.method === 'DELETE') {
-      await handleDeleteCustomProvider(req, res);
-      return true;
-    }
-    if (apiPath === '/custom-provider/toggle' && req.method === 'POST') {
-      await handleToggleCustomProvider(req, res);
-      return true;
-    }
-    if (apiPath === '/custom-provider/model' && req.method === 'POST') {
-      await handleAddCustomProviderModel(req, res);
-      return true;
-    }
-    if (apiPath === '/custom-provider/model' && req.method === 'DELETE') {
-      await handleDeleteCustomProviderModel(req, res);
-      return true;
-    }
-
-    // Password change
-    if (apiPath === '/change-password' && req.method === 'POST') {
-      await handleChangePassword(req, res);
-      return true;
-    }
-
-    // Username change
-    if (apiPath === '/change-username' && req.method === 'POST') {
-      await handleChangeUsername(req, res);
-      return true;
-    }
-
-    // Dynamic routes: /providers/:key/test, /providers/:key/discover
-    const testMatch = apiPath.match(/^\/providers\/([\w-]+)\/test$/);
-    if (testMatch && req.method === 'POST') {
-      await handleTestProvider(req, res, testMatch[1]);
-      return true;
-    }
-    const discoverMatch = apiPath.match(/^\/providers\/([\w-]+)\/discover$/);
-    if (discoverMatch && req.method === 'POST') {
-      await handleDiscoverModels(req, res, discoverMatch[1]);
-      return true;
-    }
-
-    jsonResponse(res, 404, { error: 'Admin API endpoint not found' });
-    return true;
-  } catch (err) {
-    console.error('[Admin] Error:', err.message);
-    jsonResponse(res, 500, { error: err.message });
-    return true;
-  }
+  return false;
 }
 
 module.exports = {

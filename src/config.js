@@ -2,20 +2,26 @@
  * Config Manager
  * 
  * Replicated from free-coding-models src/config.js
- * Manages ~/.free-llm-api-provider.json with API keys, provider states, and router settings.
+ * Manages <project-root>/.data/config.json with API keys, provider states, and router settings.
  */
 
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const crypto = require('crypto');
-const { getProviderKeys, addProviderKey, removeAllProviderKeys, isProviderEnabled: dbIsProviderEnabled, setProviderEnabled, getServerApiKey: dbGetServerApiKey, ensureServerApiKey: dbEnsureServerApiKey, getMeta, setMeta } = require('./db');
+const { getProviderKeys, addProviderKey, removeAllProviderKeys, isProviderEnabled: dbIsProviderEnabled, setProviderEnabled, getServerApiKey: dbGetServerApiKey, ensureServerApiKey: dbEnsureServerApiKey, getMeta, setMeta, encryptApiKey, decryptApiKey } = require('./db');
+
+/** 项目根目录下的 .data 文件夹作为默认数据存储路径 */
+const DATA_DIR_DEFAULT = path.resolve(__dirname, '..', '.data');
 
 const CONFIG_PATH = process.env.DATA_DIR
   ? path.join(process.env.DATA_DIR, 'config.json')
-  : path.join(os.homedir(), '.free-llm-api-provider.json');
-const CONFIG_DIR = process.env.DATA_DIR || path.join(os.homedir(), '.config', 'free-llm-api-provider');
-const BACKUP_DIR = process.env.DATA_DIR || path.join(os.homedir(), '.free-llm-api-provider.backups');
+  : path.join(DATA_DIR_DEFAULT, 'config.json');
+const CONFIG_DIR = process.env.DATA_DIR || DATA_DIR_DEFAULT;
+const BACKUP_DIR = path.join(process.env.DATA_DIR || DATA_DIR_DEFAULT, 'backups');
+
+/** 配置文件内存缓存，500ms TTL 避免频繁磁盘读取 */
+const CONFIG_CACHE_TTL = 500;
+let _configCache = { data: null, ts: 0 };
 
 // Environment variable names per provider
 const ENV_VARS = {
@@ -41,6 +47,9 @@ const ENV_VARS = {
   iflow: 'IFLOW_API_KEY',
   chutes: 'CHUTES_API_KEY',
   ovhcloud: 'OVH_AI_ENDPOINTS_ACCESS_TOKEN',
+  github: 'GITHUB_TOKEN',
+  cohere: 'COHERE_API_KEY',
+  reka: 'REKA_API_KEY',
 };
 
 function isPlainObject(value) {
@@ -175,10 +184,17 @@ function restoreFromBackup() {
 
 // Main config functions
 function loadConfig() {
-  return readStoredConfigSnapshot();
+  const now = Date.now();
+  if (_configCache.data && (now - _configCache.ts) < CONFIG_CACHE_TTL) {
+    return _configCache.data;
+  }
+  _configCache.data = readStoredConfigSnapshot();
+  _configCache.ts = Date.now();
+  return _configCache.data;
 }
 
 function saveConfig(config) {
+  _configCache = { data: null, ts: 0 }; // 立即失效缓存
   const backupCreated = createBackup();
   const tempPath = `${CONFIG_PATH}.tmp-${process.pid}-${Date.now()}`;
   
@@ -189,7 +205,23 @@ function saveConfig(config) {
       ...normalizeConfigShape(config),
       apiKeys: { ...latest.apiKeys, ...normalizeApiKeysSection(config.apiKeys) },
     };
-    
+
+    // 加密明文 apiKeys 后再写入磁盘（config.json 只存储密文）
+    for (const [provider, keys] of Object.entries(merged.apiKeys)) {
+      if (Array.isArray(keys)) {
+        merged.apiKeys[provider] = keys.map(k => {
+          if (typeof k === 'string' && k.trim()) {
+            const encrypted = encryptApiKey(k);
+            try { return JSON.parse(encrypted); } catch { return k; }
+          }
+          return k; // 已为加密对象 {iv, tag, data}，无需重复加密
+        });
+      } else if (typeof keys === 'string' && keys.trim()) {
+        const encrypted = encryptApiKey(keys);
+        try { merged.apiKeys[provider] = JSON.parse(encrypted); } catch {}
+      }
+    }
+
     const json = JSON.stringify(merged, null, 2);
     fs.writeFileSync(tempPath, json, { mode: 0o600 });
     fs.renameSync(tempPath, CONFIG_PATH);
@@ -241,7 +273,18 @@ function getApiKey(config, providerKey) {
   if (dbKeys.length > 0) return dbKeys[0].key;
 
   // 3. Check JSON config (legacy)
-  return config?.apiKeys?.[providerKey] || null;
+  const jsonKey = config?.apiKeys?.[providerKey] || null;
+  if (jsonKey) {
+    // Config.json 存储加密密钥，需要解密
+    if (typeof jsonKey === 'string' && jsonKey.trim()) return decryptApiKey(jsonKey);
+    if (typeof jsonKey === 'object' && jsonKey.iv) return decryptApiKey(jsonKey);
+    if (Array.isArray(jsonKey) && jsonKey.length > 0) {
+      const first = jsonKey[0];
+      if (typeof first === 'string' && first.trim()) return decryptApiKey(first);
+      if (typeof first === 'object' && first.iv) return decryptApiKey(first);
+    }
+  }
+  return null;
 }
 
 function getAllApiKeys(config, providerKey) {
@@ -262,13 +305,22 @@ function getAllApiKeys(config, providerKey) {
     if (!keys.includes(entry.key)) keys.push(entry.key);
   }
 
-  // 3. Check JSON config (legacy)
+  // 3. Check JSON config (legacy) — 需要解密存储的加密密钥
   const configKeys = config?.apiKeys?.[providerKey];
-  if (typeof configKeys === 'string') {
-    if (!keys.includes(configKeys)) keys.push(configKeys);
-  } else if (Array.isArray(configKeys)) {
-    for (const k of configKeys) {
-      if (!keys.includes(k)) keys.push(k);
+  if (configKeys) {
+    const processKey = (k) => {
+      if (typeof k === 'string' && k.trim()) return decryptApiKey(k);
+      if (typeof k === 'object' && k && k.iv) return decryptApiKey(k);
+      return null;
+    };
+    if (typeof configKeys === 'string' || (typeof configKeys === 'object' && configKeys.iv)) {
+      const decrypted = processKey(configKeys);
+      if (decrypted && !keys.includes(decrypted)) keys.push(decrypted);
+    } else if (Array.isArray(configKeys)) {
+      for (const k of configKeys) {
+        const decrypted = processKey(k);
+        if (decrypted && !keys.includes(decrypted)) keys.push(decrypted);
+      }
     }
   }
 
@@ -284,12 +336,12 @@ function isProviderEnabled(config, providerKey) {
   return config.providers[providerKey]?.enabled !== false;
 }
 
-function addApiKey(config, providerKey, key) {
+function addApiKey(config, providerKey, key, notes) {
   const trimmed = typeof key === 'string' ? key.trim() : '';
   if (!trimmed) return false;
 
-  // Write to SQLite
-  try { addProviderKey(providerKey, trimmed); } catch {}
+  // Write to SQLite (with optional notes)
+  try { addProviderKey(providerKey, trimmed, notes || ''); } catch {}
 
   // Also write to JSON config for backward compatibility
   if (!config.apiKeys) config.apiKeys = {};
@@ -340,10 +392,16 @@ function listApiKeys(config, providerKey) {
 
 function getEnabledProviders(config) {
   const enabled = [];
-  for (const key of Object.keys(ENV_VARS)) {
-    if (isProviderEnabled(config, key) && getApiKey(config, key)) {
-      enabled.push(key);
-    }
+  const { sources } = require('./models');
+  for (const key of Object.keys(sources)) {
+    const src = sources[key];
+    // Skip zen-only, CLI-only, and shutdown providers
+    if (src?.zenOnly || src?.cliOnly || !src?.url) continue;
+    if (!isProviderEnabled(config, key)) continue;
+    // No-key-required providers (Pollinations, LLM7) are always enabled
+    if (src?.noKeyRequired) { enabled.push(key); continue; }
+    // Normal providers need an API key
+    if (getApiKey(config, key)) enabled.push(key);
   }
   return enabled;
 }
@@ -358,12 +416,22 @@ function generateServerApiKey() {
 }
 
 function getServerApiKey(config) {
-  // SQLite manages this now, but keep JSON config as fallback
-  try { return dbGetServerApiKey(); } catch {}
-  if (config && config.generatedApiKey) return config.generatedApiKey;
+  // Priority: env var > SQLite > JSON config > auto-generate
   const envKey = process.env.FLAP_API_KEY;
   if (envKey && envKey.startsWith('sk-')) return envKey;
-  return 'sk-free-llm-api-provider';
+  try {
+    const dbKey = dbGetServerApiKey();
+    if (dbKey && dbKey.startsWith('sk-')) return dbKey;
+  } catch (err) {
+    console.warn('[Config] dbGetServerApiKey 失败:', err.message);
+  }
+  if (config && config.generatedApiKey && config.generatedApiKey.startsWith('sk-')) return config.generatedApiKey;
+  const generated = generateServerApiKey();
+  try { dbEnsureServerApiKey(generated); } catch (err) {
+    console.warn('[Config] 持久化服务器 API Key 失败:', err.message);
+  }
+  console.warn('[Config] 未配置 FLAP_API_KEY，已自动生成服务器 API Key');
+  return generated;
 }
 
 function ensureServerApiKey(config) {
