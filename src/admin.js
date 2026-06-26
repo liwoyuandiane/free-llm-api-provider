@@ -841,6 +841,15 @@ async function rM(){
   for(const m of sm){const id=m[0];if(!seenIds.has(id)){seenIds.add(id);all.push({id,name:m[1],tier:m[2],provider:m[5],source:'静态'});}}
   for(const m of disc){const id=m.id;if(!seenIds.has(id)){seenIds.add(id);all.push({id,name:m.id,tier:'discovered',provider:m.provider,source:'发现'});}}
   const filtered=all.filter(m=>keyedProviders.has(m.provider));
+  // 按等级排序（S+ 在最前，C 在最后）
+  const tierOrder={'S+':0,'S':1,'A+':2,'A':3,'A-':4,'B+':5,'B':6,'C':7,'discovered':8,'':9};
+  filtered.sort((a,b)=>{
+    const ta=mt[gk(a)]||a.tier||a[2]||'';
+    const tb=mt[gk(b)]||b.tier||b[2]||'';
+    const oa=tierOrder[ta]??9,ob=tierOrder[tb]??9;
+    if(oa!==ob)return oa-ob;
+    return (a.id||a[0]||'').localeCompare(b.id||b[0]||'');
+  });
   // 更新侧边栏 badge
   const badge=document.getElementById('mb');
   if(badge) badge.textContent=filtered.length>0?String(filtered.length):'';
