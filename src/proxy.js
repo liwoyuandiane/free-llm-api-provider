@@ -987,9 +987,10 @@ function createServer() {
     
     // Chat completions
     if (pathname === '/v1/chat/completions' && req.method === 'POST') {
-      // Validate API key
+      // Validate API key (case-insensitive Bearer prefix per HTTP spec)
       const authHeader = req.headers.authorization || '';
-      const apiKey = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : authHeader.trim();
+      const bearerMatch = authHeader.match(/^bearer\s+(.+)$/i);
+      const apiKey = bearerMatch ? bearerMatch[1].trim() : authHeader.trim();
       
       if (!timingSafeEqual(apiKey, getServerKey())) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
