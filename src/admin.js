@@ -444,15 +444,20 @@ tr:hover td{background:var(--card-hover)}
             <option value="tier-a">tier-a</option>
             <option value="tier-b">tier-b</option>
           </select>
-          <div style="display:flex;align-items:center;gap:8px;margin-left:8px;padding:4px 12px;background:var(--b2);border-radius:var(--radius-sm)">
-            <span style="font-size:var(--font-sm);color:var(--text-secondary);white-space:nowrap" id="pgStreamLabel">流式</span>
-            <label class="tog"><input type="checkbox" id="pgStream" checked onchange="document.getElementById('pgStreamLabel').textContent=this.checked?'流式':'非流式'"><span class="sl"></span></label>
+          <div style="display:flex;align-items:center;gap:10px;margin-left:8px">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:var(--font-sm);color:var(--text-secondary);user-select:none">
+              <input type="checkbox" id="pgStream" checked style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer">
+              流式
+            </label>
           </div>
         </div>
         <div id="pgChat" class="pg-chat" style="min-height:200px;max-height:500px;overflow-y:auto;margin-bottom:10px"></div>
         <div class="pg-inp">
           <textarea id="pgInput" placeholder="输入消息... (Enter 发送, Ctrl+Enter 换行)" rows="2" onkeydown="if(event.key==='Enter'&&!event.ctrlKey&&!event.shiftKey){event.preventDefault();pgSend()}"></textarea>
-          <button class="btn btn-p" onclick="pgSend()">发送</button>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <button class="btn btn-p" onclick="pgSend()">发送</button>
+            <button class="btn btn-sm" onclick="pgClear()" style="font-size:12px;color:var(--text-muted)">清除</button>
+          </div>
         </div>
       </div>
     </div>
@@ -964,6 +969,10 @@ function filterModels(q){
 /**
  * pgSend — 发送 Playground 聊天消息（支持流式和非流式）
  */
+/**
+ * pgClear — 清空测试页签聊天记录
+ */
+function pgClear(){document.getElementById('pgChat').innerHTML='';}
 async function pgSend(){
   const inp=document.getElementById('pgInput'),chat=document.getElementById('pgChat');
   const msg=inp.value.trim();if(!msg)return;
