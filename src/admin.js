@@ -1491,6 +1491,7 @@ async function handleSetProviderPriority(req, res) {
   const body = await readJsonBody(req);
   const { provider, priority } = body;
   if (!provider) return jsonResponse(res, 400, { error: 'Missing provider' });
+  if (!/^[\w-]{1,100}$/.test(provider)) return jsonResponse(res, 400, { error: 'Invalid provider name' });
   if (priority === undefined || priority === null) return jsonResponse(res, 400, { error: 'Missing priority' });
   setProviderPriority(provider, Number(priority));
   jsonResponse(res, 200, { success: true });
@@ -1499,6 +1500,7 @@ async function handleSetProviderPriority(req, res) {
 async function handleDeleteProviderPriority(req, res) {
   const body = await readJsonBody(req);
   if (!body.provider) return jsonResponse(res, 400, { error: 'Missing provider' });
+  if (!/^[\w-]{1,100}$/.test(body.provider)) return jsonResponse(res, 400, { error: 'Invalid provider name' });
   deleteProviderPriority(body.provider);
   jsonResponse(res, 200, { success: true });
 }
@@ -1596,6 +1598,14 @@ async function handleAddProviderKey(req, res) {
   if (!provider || !key) {
     return jsonResponse(res, 400, { error: 'Missing provider or key' });
   }
+  // Validate provider name: alphanumeric, hyphens, underscores, max 100 chars
+  if (!/^[\w-]{1,100}$/.test(provider)) {
+    return jsonResponse(res, 400, { error: 'Invalid provider name' });
+  }
+  // Validate key: max 1024 chars
+  if (key.length > 1024) {
+    return jsonResponse(res, 400, { error: 'Key too long (max 1024 chars)' });
+  }
   const config = loadConfig();
   addApiKey(config, provider, key, notes);
   saveConfig(config);
@@ -1608,6 +1618,9 @@ async function handleRemoveProviderKey(req, res) {
   if (!provider) {
     return jsonResponse(res, 400, { error: 'Missing provider' });
   }
+  if (!/^[\w-]{1,100}$/.test(provider)) {
+    return jsonResponse(res, 400, { error: 'Invalid provider name' });
+  }
   const config = loadConfig();
   removeApiKey(config, provider);
   saveConfig(config);
@@ -1618,6 +1631,12 @@ async function handleRemoveSingleProviderKey(req, res) {
   const body = await readJsonBody(req);
   const { provider, key } = body;
   if (!provider || !key) return jsonResponse(res, 400, { error: 'Missing provider or key' });
+  if (!/^[\w-]{1,100}$/.test(provider)) {
+    return jsonResponse(res, 400, { error: 'Invalid provider name' });
+  }
+  if (key.length > 1024) {
+    return jsonResponse(res, 400, { error: 'Key too long (max 1024 chars)' });
+  }
   removeProviderKey(provider, key);
   jsonResponse(res, 200, { success: true });
 }
@@ -1626,6 +1645,9 @@ async function handleUpdateKeyNotes(req, res) {
   const body = await readJsonBody(req);
   const { provider, key, notes } = body;
   if (!provider || !key) return jsonResponse(res, 400, { error: 'Missing provider or key' });
+  if (!/^[\w-]{1,100}$/.test(provider)) {
+    return jsonResponse(res, 400, { error: 'Invalid provider name' });
+  }
   updateProviderKeyNotes(provider, key, notes || '');
   jsonResponse(res, 200, { success: true });
 }
