@@ -1132,9 +1132,10 @@ function createServer() {
       return;
     }
     
-    // Models list — tier aliases + discovered models
+    // Models list — tier aliases + synced models + discovered models
     if (pathname === '/v1/models' && req.method === 'GET') {
       const { getAllDiscoveredModels } = require('./admin');
+      const { getAllSyncedModels } = require('./sync');
       
       // Tier alias models
       const tiers = [
@@ -1154,6 +1155,17 @@ function createServer() {
         owned_by: 'free-llm-api-provider',
         created: 1700000000,
       }));
+
+      // Append synced models (from litellm catalog)
+      const synced = getAllSyncedModels();
+      for (const m of synced) {
+        data.push({
+          id: m.id,
+          object: 'model',
+          owned_by: m.provider || 'synced',
+          created: 1700000000,
+        });
+      }
 
       // Append discovered models
       const discovered = getAllDiscoveredModels();
