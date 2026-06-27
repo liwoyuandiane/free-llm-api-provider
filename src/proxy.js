@@ -148,8 +148,30 @@ const stats = {
   providerUsage: new Map(),
 };
 
-// Active provider tracking - stick to what works until it fails
-let activeProvider = null; // { key, apiKey, name, url, models }
+// Active provider tracking - per-session to avoid concurrent race conditions
+const activeProviders = new Map(); // sessionId -> { key, apiKey, name, url, models, ts }
+const ACTIVE_PROVIDER_TTL = 300000; // 5 minutes
+
+function getActiveProvider(sessionId) {
+  const key = sessionId || '__default__';
+  const entry = activeProviders.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > ACTIVE_PROVIDER_TTL) {
+    activeProviders.delete(key);
+    return null;
+  }
+  return entry;
+}
+
+function setActiveProvider(sessionId, provider) {
+  const key = sessionId || '__default__';
+  activeProviders.set(key, { ...provider, ts: Date.now() });
+}
+
+function clearActiveProvider(sessionId) {
+  const key = sessionId || '__default__';
+  activeProviders.delete(key);
+}
 
 // Key rotation counters per provider (round-robin across multiple keys)
 const keyRotationCounters = new Map(); // providerKey -> number
@@ -830,20 +852,21 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
     }
   }
   
-  // 1. If no sticky hit, try the active provider
-  if (!chosenProvider && activeProvider && !isCircuitOpen(activeProvider.key)) {
-    const stillConfigured = providers.find(p => p.key === activeProvider.key && p.apiKey === activeProvider.apiKey);
+  // 1. If no sticky hit, try the active provider for this session
+  const currentActive = getActiveProvider(sessionId);
+  if (!chosenProvider && currentActive && !isCircuitOpen(currentActive.key)) {
+    const stillConfigured = providers.find(p => p.key === currentActive.key && p.apiKey === currentActive.apiKey);
     if (stillConfigured) {
       const contextCheck = checkContextFit(stillConfigured, reqBody);
       if (contextCheck.fits) {
         chosenProvider = stillConfigured;
       } else {
-        console.log(`[Proxy] ⚠️ Active provider ${activeProvider.key} model ${contextCheck.model} context too small (${contextCheck.tokens} > ${contextCheck.limit}), skipping...`);
-        errors.push({ provider: activeProvider.key, error: `Context too small: ${contextCheck.tokens} > ${contextCheck.limit}` });
-        activeProvider = null;
+        console.log(`[Proxy] ⚠️ Active provider ${currentActive.key} model ${contextCheck.model} context too small (${contextCheck.tokens} > ${contextCheck.limit}), skipping...`);
+        errors.push({ provider: currentActive.key, error: `Context too small: ${contextCheck.tokens} > ${contextCheck.limit}` });
+        clearActiveProvider(sessionId);
       }
     } else {
-      activeProvider = null;
+      clearActiveProvider(sessionId);
     }
   }
   
@@ -872,7 +895,7 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
       errors.push({ provider: chosenProvider.key, error: err.error || err.message });
       if (err.status === 429) setCooldown(chosenProvider.key, chosenProvider.apiKey, RATE_LIMIT_COOLDOWN_MS);
       stats.providerUsage.set(chosenProvider.key, (stats.providerUsage.get(chosenProvider.key) || 0) + 1);
-      if (!sessionId) activeProvider = null;
+      if (!sessionId) clearActiveProvider(sessionId);
     }
   }
   
@@ -900,8 +923,8 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
       stats.providerUsage.set(provider.key, (stats.providerUsage.get(provider.key) || 0) + 1);
       recordRateLimit(provider.key, provider.apiKey);
       
-      activeProvider = { key: provider.key, apiKey: provider.apiKey, name: provider.name, url: provider.url, models: provider.models };
-      if (sessionId) setStickyProvider(sessionId, activeProvider);
+      setActiveProvider(sessionId, { key: provider.key, apiKey: provider.apiKey, name: provider.name, url: provider.url, models: provider.models });
+      if (sessionId) setStickyProvider(sessionId, { key: provider.key, apiKey: provider.apiKey, name: provider.name, url: provider.url, models: provider.models });
       console.log(`[Proxy] Set active provider: ${provider.key}`);
       
       try {

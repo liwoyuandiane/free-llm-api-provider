@@ -59,7 +59,9 @@ function getAdminInitialData() {
     try { const tm = getProviderTestModel(k); if (tm) testModels[k] = tm; } catch {}
   }
   const adminUsername = getAdminUsername();
-  return { serverApiKey, allProviders, enabledProviders, apiKeys, testModels, adminUsername };
+  // 只返回脱敏的 server API key，完整 key 通过 /api/admin/server-key 获取
+  const maskedServerKey = serverApiKey ? serverApiKey.slice(0, 8) + '...' + serverApiKey.slice(-4) : '(not configured)';
+  return { serverApiKey: maskedServerKey, allProviders, enabledProviders, apiKeys, testModels, adminUsername };
 }
 
 // ============================================================================
@@ -583,9 +585,9 @@ function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').repl
  */
 function jsesc(s){return String(s).replace(/\\\\/g,'\\\\\\\\').replace(/'/g,"\\'").replace(/"/g,'\\\\u0022').replace(/\\\\n/g,'\\\\\\\\n').replace(/\\\\r/g,'\\\\\\\\r');}
 /**
- * copyKey — 复制服务器 API Key 到剪贴板
+ * copyKey — 复制服务器 API Key 到剪贴板（从 API 获取完整 key）
  */
-function copyKey(){const k=document.getElementById('serverKey').textContent;navigator.clipboard.writeText(k).then(()=>t('Key 已复制')).catch(()=>t('复制失败'));}
+async function copyKey(){try{const r=await api('/server-key');if(r.key){await navigator.clipboard.writeText(r.key);t('Key 已复制');}else{t('Key 未配置','err');}}catch(e){t('复制失败','err');}}
 /**
  * logout — 登出管理后台，跳转到登录页
  */
@@ -1688,6 +1690,12 @@ async function handleRegenerateKey(res) {
   jsonResponse(res, 200, { key: newKey });
 }
 
+async function handleGetServerKey(res) {
+  const config = loadConfig();
+  const key = getServerApiKey(config);
+  jsonResponse(res, 200, { key: key || '' });
+}
+
 async function handleTestProvider(req, res, providerKey) {
   const config = loadConfig();
   let url = '';
@@ -1967,6 +1975,7 @@ async function handleAdminRequest(parsedUrl, req, res) {
         { method: 'GET',   path: '/config',              handler: () => handleGetConfig(res) },
         { method: 'PUT',   path: '/config',              handler: () => handleUpdateConfig(req, res) },
         { method: 'POST',  path: '/key/regenerate',      handler: () => handleRegenerateKey(res) },
+        { method: 'GET',   path: '/server-key',          handler: () => handleGetServerKey(res) },
         { method: 'ALL',   path: '/health',              handler: () => handleHealth(req, res) },
         { method: 'POST',  path: '/provider-key',        handler: () => handleAddProviderKey(req, res) },
         { method: 'DELETE',path: '/provider-key',        handler: () => handleRemoveProviderKey(req, res) },

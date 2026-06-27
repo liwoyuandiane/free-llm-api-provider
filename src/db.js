@@ -28,6 +28,71 @@ const DB_PATH = path.join(DB_DIR, 'data.db');
 const CONFIG_PATH = process.env.DATA_DIR
   ? path.join(process.env.DATA_DIR, 'config.json')
   : path.join(DATA_DIR_DEFAULT, 'config.json');
+const ENV_PATH = path.join(DB_DIR, '.env');
+
+// ============================================================================
+// .env file loader — loads .data/.env into process.env
+// ============================================================================
+
+/**
+ * 从 .data/.env 文件加载环境变量到 process.env。
+ * 格式：KEY=VALUE，# 开头为注释，空行忽略。
+ * 不覆盖已有的环境变量（环境变量优先级最高）。
+ */
+function loadEnvFile() {
+  try {
+    if (!fs.existsSync(ENV_PATH)) return;
+    const content = fs.readFileSync(ENV_PATH, 'utf8');
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx < 1) continue;
+      const key = trimmed.substring(0, eqIdx).trim();
+      const value = trimmed.substring(eqIdx + 1).trim();
+      // 不覆盖已有的环境变量
+      if (!process.env[key]) {
+        process.env[key] = value;
+      }
+    }
+  } catch (err) {
+    // .env 文件不存在或读取失败，忽略
+  }
+}
+
+/**
+ * 将环境变量写入 .data/.env 文件。
+ * @param {string} key - 环境变量名
+ * @param {string} value - 值
+ */
+function saveEnvVar(key, value) {
+  try {
+    let lines = [];
+    if (fs.existsSync(ENV_PATH)) {
+      lines = fs.readFileSync(ENV_PATH, 'utf8').split('\n');
+    }
+    // 查找已有的 key
+    let found = false;
+    for (let i = 0; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+      if (trimmed.startsWith(key + '=')) {
+        lines[i] = key + '=' + value;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      lines.push(key + '=' + value);
+    }
+    fs.writeFileSync(ENV_PATH, lines.join('\n'), 'utf8');
+    process.env[key] = value;
+  } catch (err) {
+    console.warn('[DB] 写入 .env 文件失败:', err.message);
+  }
+}
+
+// Load .env file at module startup
+loadEnvFile();
 
 // ============================================================================
 // Singleton
@@ -66,32 +131,35 @@ function generateToken() {
 
 /**
  * 获取或创建加密密钥。
- * - 从 meta 表读取 'encryption_key'（存储为 hex 字符串）
- * - 如果不存在，则用 crypto.randomBytes(32) 生成并持久化到 meta 表
- * - 支持通过环境变量 ENCRYPTION_KEY 覆盖（必须为 64 个 hex 字符 = 32 字节）
+ * - 优先从环境变量 ENCRYPTION_KEY 读取（包括 .data/.env 中的）
+ * - 其次从 meta 表读取（兼容旧数据）
+ * - 如果都没有，生成新密钥并保存到 .data/.env 文件
  * @returns {Buffer} 32 字节的加密密钥
  */
 function getOrCreateEncryptionKey() {
-  // 优先使用环境变量中的密钥
+  // 优先使用环境变量中的密钥（.data/.env 已在模块加载时读入 process.env）
   const envKey = process.env.ENCRYPTION_KEY;
   if (envKey) {
     if (!/^[0-9a-f]{64}$/i.test(envKey)) {
-      console.warn('[DB] ENCRYPTION_KEY 环境变量格式错误，需要 64 个 hex 字符（32 字节），将使用数据库中的密钥');
+      console.warn('[DB] ENCRYPTION_KEY 格式错误，需要 64 个 hex 字符（32 字节）');
     } else {
       return Buffer.from(envKey, 'hex');
     }
   }
 
-  // 从 meta 表读取已有密钥
+  // 兼容旧数据：从 meta 表读取已有密钥
   let stored = getMeta('encryption_key');
   if (stored) {
+    // 迁移到 .env 文件
+    saveEnvVar('ENCRYPTION_KEY', stored);
+    console.log('[DB] 加密密钥已从数据库迁移到 .env 文件');
     return Buffer.from(stored, 'hex');
   }
 
-  // 生成新密钥
+  // 生成新密钥并保存到 .env 文件
   const keyHex = crypto.randomBytes(32).toString('hex');
-  setMeta('encryption_key', keyHex);
-  console.log('[DB] 已生成新的 AES-256-GCM 加密密钥');
+  saveEnvVar('ENCRYPTION_KEY', keyHex);
+  console.log('[DB] 已生成新的 AES-256-GCM 加密密钥，保存到 .env 文件');
   return Buffer.from(keyHex, 'hex');
 }
 
@@ -1381,4 +1449,6 @@ module.exports = {
   getAnalyticsTimeSeries,
   getTopModels,
   cleanupOldAnalytics,
+  loadEnvFile,
+  saveEnvVar,
 };
