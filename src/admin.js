@@ -400,7 +400,7 @@ tr:hover td{background:var(--card-hover)}
         <div id="providerList"><div class="load" style="margin:18px auto"></div></div>
       </div>
       <div class="c">
-        <div class="ct" style="margin-bottom:4px">提供商优先级</div>
+        <div class="ch"><span class="ct">提供商优先级</span><button class="btn btn-p btn-sm" id="savePPBtn" onclick="savePP()" style="display:none">保存优先级</button></div>
         <p style="font-size:14px;color:var(--dim);margin-bottom:10px">数字越小优先级越高（0 = 最高）。相同模型时优先使用高优先级提供商。</p>
         <div id="priorityList"><div class="load" style="margin:8px 0"></div></div>
       </div>
@@ -709,6 +709,7 @@ async function togP(k,e){await api('/config',{method:'PUT',body:{toggleProvider:
 /**
  * rPP — 渲染提供商优先级列表
  */
+const _pendingPriorities={};
 async function rPP(){
   const el=document.getElementById('priorityList');if(!el)return;
   try{
@@ -716,7 +717,6 @@ async function rPP(){
     const pr=cfg.allProviders||[];
     const pp=cfg.providerPriorities||{};
     const ak=cfg.apiKeys||{};
-    // 只显示有 API Key 的提供商
     const withKeys=pr.filter(p=>{const k=ak[p.key];return Array.isArray(k)&&k.length>0;});
     if(withKeys.length===0){el.innerHTML='<div style="color:var(--dim);font-size:14px">暂无已配置的提供商</div>';return;}
     el.innerHTML=withKeys.map(p=>{
@@ -725,21 +725,39 @@ async function rPP(){
         '<span style="flex:1;font-weight:500">'+esc(p.name)+'</span>'+
         '<input type="number" min="0" max="999" value="'+val+'" placeholder="默认"'+
         ' style="width:70px;padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:14px;text-align:center"'+
-        ' onchange="setPP(\\''+jsesc(p.key)+'\\',this.value)"'+
+        ' onchange="setPP(\\''+jsesc(p.key)+'\\',this.value);this.classList.add(\\'ts-modified\\')"'+
         ' onkeydown="if(event.key===\\'Enter\\')this.blur()">'+
-        (val!==''?'<button class="btn btn-sm" onclick="delPP(\\''+jsesc(p.key)+'\\')" title="恢复默认" style="padding:2px 8px;font-size:12px">✕</button>':'')+
         '</div>';
     }).join('');
   }catch(e){el.innerHTML='<div style="color:var(--red)">加载失败</div>';}
 }
 /**
- * setPP — 设置提供商优先级
+ * setPP — 记录优先级变更（不立即保存）
  */
-async function setPP(k,v){const n=v===''?null:Number(v);if(n!==null&&(isNaN(n)||n<0))return;if(n===null){await delPP(k);return;}await api('/provider-priority',{method:'POST',body:{provider:k,priority:n}});t('优先级已设置');}
+function setPP(k,v){
+  _pendingPriorities[k]=v===''?null:Number(v);
+  const btn=document.getElementById('savePPBtn');
+  if(btn)btn.style.display='';
+}
 /**
- * delPP — 删除提供商优先级（恢复默认）
+ * savePP — 批量保存优先级变更
  */
-async function delPP(k){await api('/provider-priority',{method:'DELETE',body:{provider:k}});t('已恢复默认');rPP();}
+async function savePP(){
+  const entries=Object.entries(_pendingPriorities);
+  if(entries.length===0)return;
+  let ok=0;
+  for(const [k,v] of entries){
+    if(v===null){await api('/provider-priority',{method:'DELETE',body:{provider:k}});}
+    else{await api('/provider-priority',{method:'POST',body:{provider:k,priority:v}});}
+    ok++;
+  }
+  // 移除已修改标记
+  document.querySelectorAll('#priorityList .ts-modified').forEach(el=>el.classList.remove('ts-modified'));
+  for(const k of Object.keys(_pendingPriorities))delete _pendingPriorities[k];
+  const btn=document.getElementById('savePPBtn');
+  if(btn)btn.style.display='none';
+  t('优先级已保存: '+ok+' 个');
+}
 /**
  * tP — 测试提供商连接
  * @param {string} k - 提供商 key
