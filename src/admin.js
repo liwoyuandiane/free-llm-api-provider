@@ -1370,11 +1370,22 @@ async function handleSaveCustomProvider(req, res) {
   if (!/^[a-zA-Z0-9_.\-]{1,64}$/.test(name)) {
     return jsonResponse(res, 400, { error: '名称只能包含字母、数字、下划线、连字符和点，最长 64 位' });
   }
-  // Validate URL protocol
+  // Validate URL protocol + SSRF protection
   try {
     const parsed = new URL(baseUrl);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return jsonResponse(res, 400, { error: 'URL 必须以 http:// 或 https:// 开头' });
+    }
+    // Block private/reserved IPs (SSRF protection)
+    const hostname = parsed.hostname.toLowerCase();
+    if (hostname !== '127.0.0.1' && hostname !== 'localhost' && hostname !== '::1') {
+      const isPrivate = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|169\.254\.)/.test(hostname) ||
+        hostname.endsWith('.local') || hostname.endsWith('.internal') ||
+        /^::ffff:(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.)/.test(hostname) ||
+        /^(fe80:|fc00:|fd00:|::1)/.test(hostname);
+      if (isPrivate) {
+        return jsonResponse(res, 400, { error: '不允许使用私有/保留 IP 地址' });
+      }
     }
   } catch {
     return jsonResponse(res, 400, { error: 'URL 格式无效' });
