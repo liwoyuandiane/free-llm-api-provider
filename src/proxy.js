@@ -774,9 +774,16 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
     // Network errors (ECONNRESET, DNS failures, timeouts)
     const isTimeout = error instanceof DOMException && error.name === 'AbortError';
     const errorMsg = isTimeout ? 'Timeout' : error.message;
-    console.log(`[Proxy] ❌ ${provider.key} network error: ${errorMsg}`);
-    recordFailure(provider.key);
+    console.log(`[Proxy] ❌ ${provider.key} network error: ${errorMsg} for ${selectedModelId}`);
     logRequest({ provider: provider.key, model: selectedModelId, latencyMs: Date.now() - startTime, success: false, tokensIn: 0, tokensOut: 0, requestModel: originalModel });
+
+    // Timeout/network error → try next model in same provider (if available)
+    if (modelIdx < modelsToTry.length - 1) {
+      lastError = { status: 0, error: errorMsg, provider: provider.key };
+      continue; // try next model
+    }
+
+    recordFailure(provider.key);
     throw { status: 0, error: errorMsg, provider: provider.key };
   }
   } // end for loop

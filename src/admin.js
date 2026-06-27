@@ -972,7 +972,9 @@ function filterModels(q){
 /**
  * pgClear — 清空测试页签聊天记录
  */
-function pgClear(){document.getElementById('pgChat').innerHTML='';}
+/** 对话历史（保持上下文） */
+let _pgHistory=[];
+function pgClear(){document.getElementById('pgChat').innerHTML='';_pgHistory=[];}
 async function pgSend(){
   const inp=document.getElementById('pgInput'),chat=document.getElementById('pgChat');
   const msg=inp.value.trim();if(!msg)return;
@@ -986,11 +988,15 @@ async function pgSend(){
   else{msgDiv.innerHTML='<div class="load" style="margin:4px 0"></div>';}
   chat.appendChild(msgDiv);chat.scrollTop=chat.scrollHeight;
 
+  // 构建带上下文的 messages
+  _pgHistory.push({role:'user',content:msg});
+  const messages=[..._pgHistory];
+
   try{
     const resp=await fetch('/v1/chat/completions',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
-      body:JSON.stringify({model,messages:[{role:'user',content:msg}],stream,max_tokens:1024})
+      body:JSON.stringify({model,messages,stream,max_tokens:1024})
     });
     const provider=resp.headers.get('X-Provider')||'unknown';
     if(!resp.ok){msgDiv.innerHTML='<span style="color:var(--red)">HTTP '+resp.status+'</span>';chat.scrollTop=chat.scrollHeight;return;}
@@ -1014,13 +1020,14 @@ async function pgSend(){
         }
       }
       if(streamError)msgDiv.innerHTML='<span style="color:var(--red)">'+esc(streamError)+'</span>';
-      else msgDiv.innerHTML=esc(contents||'(无内容)')+'<div class="pg-meta"><span style="color:var(--blue)">'+esc(provider)+'</span> · '+esc(streamModel||model)+'</div>';
+      else{msgDiv.innerHTML=esc(contents||'(无内容)')+'<div class="pg-meta"><span style="color:var(--blue)">'+esc(provider)+'</span> · '+esc(streamModel||model)+'</div>';if(contents)_pgHistory.push({role:'assistant',content:contents});}
     }else{
       const d=await resp.json();
       if(d.error){msgDiv.innerHTML='<span style="color:var(--red)">'+esc(d.error)+'</span>';}
       else{
         const c=d.choices?.[0]?.message?.content||'(无响应)';
         msgDiv.innerHTML=esc(c)+'<div class="pg-meta"><span style="color:var(--blue)">'+esc(provider)+'</span> · '+esc(d.model||model)+'</div>';
+        if(c&&c!=='(无响应)')_pgHistory.push({role:'assistant',content:c});
       }
     }
   }catch(e){msgDiv.innerHTML='<span style="color:var(--red)">请求失败: '+esc(e.message)+'</span>';}
