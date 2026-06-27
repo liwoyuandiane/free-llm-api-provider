@@ -89,68 +89,55 @@
 
 ## 快速开始
 
-### 安装
+### 方式一：Docker 部署（推荐）
 
 ```bash
-npm install -g free-llm-api-provider
-```
-
-> 也可以直接用 `npx free-llm-api-provider` 无需安装，但建议全局安装以便使用 `flap` 快捷命令。
-
-### 配置 API Key（只需一次）
-
-```bash
-flap config
-```
-
-交互式向导会引导你输入 Key。**只需要一个 Key 就能开始**，越多故障切换效果越好。
-
-**推荐首选 Key**：Groq — https://console.groq.com/keys （30 RPM，无需信用卡）
-
-**也可以设置环境变量：**
-```bash
-export GROQ_API_KEY="你的key"
-export NVIDIA_API_KEY="你的key"
-```
-
-**多 Key 支持**：同一个提供商可以添加多个 Key：
-```bash
-# 在配置向导中添加多个 Key，失败时会逐个尝试再切提供商
-```
-
-**Key 存在哪里？**
-- SQLite 数据库：`.data/data.db`（项目根目录下，所有数据都在这里）
-- 默认端口：`4002`（可通过环境变量 `FLAP_PORT` 或 `PORT` 自定义）
-- 或环境变量（环境变量优先级更高）
-
-**服务器 API Key**：首次运行自动生成密码级随机 Key（`sk-<64位hex>`），存储在 SQLite 数据库。AI 客户端用它连接代理。可通过 `FLAP_API_KEY` 环境变量覆盖。
-
-### 启动代理
-
-```bash
-flap
-```
-
-代理运行在 `http://localhost:4002`。
-
-### Docker 部署
-
-```bash
-# 从 GitHub Container Registry 拉取
+# 拉取镜像
 docker pull ghcr.io/liwoyuandiane/free-llm-api-provider:main
 
-# 从任意目录运行（数据库保存在当前目录）
+# 启动（数据库保存在当前目录）
 cd /你的工作目录
 docker run -d \
   --name flap \
   -p 4002:4002 \
   -e DATA_DIR=/app/data \
-  -e FLAP_API_KEY=你的key \
-  -e FLAP_ADMIN_PASSWORD=admin密码 \
+  -e FLAP_ADMIN_PASSWORD=你的管理员密码 \
   -e GROQ_API_KEY=你的key \
   -v $(pwd):/app/data \
   ghcr.io/liwoyuandiane/free-llm-api-provider:main
 ```
+
+启动后浏览器打开 **http://localhost:4002/admin**，用 `admin` / 你设置的密码 登录。
+
+> **Docker Compose** 也支持：把上面的参数写到 `docker-compose.yml` 里，然后 `docker compose up -d`。
+
+### 方式二：Node.js 直接运行
+
+需要 **Node.js >= 22.5**（因为使用了内置的 `node:sqlite` 模块）。
+
+```bash
+# 克隆项目
+git clone https://github.com/liwoyuandiane/free-llm-api-provider.git
+cd free-llm-api-provider
+
+# 启动代理
+node src/cli.js
+```
+
+启动后浏览器打开 **http://localhost:4002/admin**，默认账号 `admin` / `admin123`。
+
+> 也可以用 npm 全局安装：`npm install -g free-llm-api-provider`，然后用 `flap` 命令启动。
+
+### 配置 API Key
+
+启动后在管理后台「提供商」页面添加 API Key，或通过环境变量设置：
+
+```bash
+export GROQ_API_KEY="你的key"
+export NVIDIA_API_KEY="你的key"
+```
+
+**推荐首选**：Groq — https://console.groq.com/keys（30 RPM，无需信用卡）
 
 ### 配置 AI 客户端
 
@@ -326,12 +313,20 @@ Groq key 3 → 200 ✅  ← 停留在此直到失败
 
 ## 数据存储
 
-所有配置存储在 SQLite 数据库 `.data/data.db` 中。API Key 使用 AES-256-GCM 加密存储。
+所有配置存储在 SQLite 数据库 `.data/data.db` 中。API Key 使用 AES-256-GCM 加密存储，加密密钥保存在 `.data/.env` 文件中。
+
+**`.data/.env` 文件**：存储加密密钥和提供商 API Key，格式：
+```
+ENCRYPTION_KEY=abc123...
+GROQ_API_KEY=gsk_...
+NVIDIA_API_KEY=nvapi-...
+```
+> 环境变量优先级最高，`.env` 文件次之，数据库最后。
 
 **优先级：**
 1. 环境变量（最高）
-2. SQLite 数据库
-3. 多 Key 逐个尝试后再切换
+2. `.data/.env` 文件
+3. SQLite 数据库
 
 ## 数据目录
 
