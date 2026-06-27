@@ -86,7 +86,7 @@ function checkContextFit(provider, reqBody) {
 }
 const { getHealthyProviders } = require('./health-checker');
 const { handleAdminRequest } = require('./admin');
-const { initDatabase, getDisabledModels, getCustomProviders, getCustomProviderModels, getServerApiKey: dbGetServerApiKey, getModelsWithTier, isRateLimited, recordRateLimit, setCooldown, cleanRateLimits, getStickyProvider, setStickyProvider, isVisionModel, logRequest, getAllProviderPriorities, getDiscoveredModelsByProvider } = require('./db');
+const { initDatabase, getDisabledModels, getCustomProviders, getCustomProviderModels, getServerApiKey: dbGetServerApiKey, getModelsWithTier, isRateLimited, recordRateLimit, setCooldown, cleanRateLimits, getStickyProvider, setStickyProvider, isVisionModel, logRequest, getAllProviderPriorities, getDiscoveredModelsByProvider, getProviderLimits } = require('./db');
 
 /** 代理端口，默认 4002，可通过环境变量 FLAP_PORT 或 PORT 覆盖 */
 const PROXY_PORT = parseInt(process.env.FLAP_PORT || process.env.PORT || '4002', 10);
@@ -247,7 +247,7 @@ function getPrioritizedProviders(config, opts = {}) {
         providerUrl = syncUrl.url;
         // Update rate limits from sync data
         try {
-          const providerLimits = require('./db').getProviderLimits(key);
+          const providerLimits = getProviderLimits(key);
           if (providerLimits) {
             const updatedLimits = { rpm: syncUrl.limits_rpm || 30, rpd: syncUrl.limits_rpd || 5000 };
             providerLimits.rpm = updatedLimits.rpm;
