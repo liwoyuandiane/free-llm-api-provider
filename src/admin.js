@@ -1624,47 +1624,9 @@ async function handleSweBenchSync(req, res) {
   if (!url) return jsonResponse(res, 400, { error: 'Missing URL' });
   try {
     setMeta('swe_bench_url', url);
-    const resp = await fetch(url, { signal: AbortSignal.timeout(30000) });
-    if (!resp.ok) return jsonResponse(res, 400, { error: 'HTTP ' + resp.status });
-    const data = await resp.json();
-    const models = data.models || [];
-    if (!Array.isArray(models)) return jsonResponse(res, 400, { error: 'JSON 格式错误' });
-
-    const { DatabaseSync } = require('node:sqlite');
-    const path = require('path');
-    const DB_PATH = path.join(process.env.DATA_DIR || path.resolve(__dirname, '..', '.data'), 'data.db');
-    const db = new DatabaseSync(DB_PATH);
-    try {
-      // Ensure sync_models table exists
-      db.exec(`CREATE TABLE IF NOT EXISTS sync_models (
-        provider TEXT NOT NULL, model_id TEXT NOT NULL,
-        label TEXT DEFAULT '', tier TEXT DEFAULT 'B',
-        swe_score TEXT DEFAULT '', ctx TEXT DEFAULT '',
-        UNIQUE(provider, model_id)
-      )`);
-      // Ensure index
-      db.exec("CREATE INDEX IF NOT EXISTS idx_sync_models_provider ON sync_models(provider)");
-
-      let count = 0;
-      for (const m of models) {
-        if (!m.id || !m.tier) continue;
-        const parts = m.id.split('/');
-        const provider = parts.length > 1 ? parts[0] : '';
-        const modelId = parts.length > 1 ? parts.slice(1).join('/') : m.id;
-        if (provider) {
-          db.prepare('UPDATE sync_models SET tier = ?, swe_score = ? WHERE model_id = ? AND provider = ?')
-            .run(m.tier, m.swe_score || '', modelId, provider);
-        } else {
-          db.prepare('UPDATE sync_models SET tier = ?, swe_score = ? WHERE model_id = ?')
-            .run(m.tier, m.swe_score || '', modelId);
-        }
-        count++;
-      }
-      setMeta('swe_bench_last_sync', String(Date.now()));
-      jsonResponse(res, 200, { success: true, count });
-    } finally {
-      if (db) try { db.close(); } catch {}
-    }
+    const { syncSweBenchScores } = require('./sync');
+    const count = await syncSweBenchScores(url);
+    jsonResponse(res, 200, { success: true, count });
   } catch (err) {
     jsonResponse(res, 400, { error: err.message });
   }
@@ -1692,7 +1654,7 @@ async function handleSweBenchExport(res) {
     // Synced models (may have user-adjusted tiers)
     const synced = getAllSyncedModels();
     for (const m of synced) {
-      const key = m.id;
+      const key = m.provider + '/' + m.id;
       const finalTier = userTiers[key] || m.tier;
       const entry = { id: key, tier: finalTier, swe_score: m.swe_score || '', ctx: m.ctx || '' };
       const idx = models.findIndex(x => x.id === key);

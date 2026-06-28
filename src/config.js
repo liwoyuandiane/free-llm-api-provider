@@ -212,11 +212,11 @@ function saveConfig(config) {
         merged.apiKeys[provider] = keys.map(k => {
           if (typeof k === 'string' && k.trim()) {
             const encrypted = encryptApiKey(k);
-            if (!encrypted) return k; // 加密失败，保留原值
-            try { return JSON.parse(encrypted); } catch { return k; }
+            if (!encrypted) { console.error('[Config] 加密失败，Key 未写入备份:', provider); return null; }
+            try { return JSON.parse(encrypted); } catch { return null; }
           }
           return k; // 已为加密对象 {iv, tag, data}，无需重复加密
-        });
+        }).filter(k => k !== null); // 过滤掉加密失败的 Key
       } else if (typeof keys === 'string' && keys.trim()) {
         const encrypted = encryptApiKey(keys);
         if (encrypted) try { merged.apiKeys[provider] = JSON.parse(encrypted); } catch {}

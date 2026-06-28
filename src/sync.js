@@ -105,6 +105,60 @@ async function fetchCatalog(url) {
 }
 
 /**
+ * Sync SWE-bench model scores from a JSON URL into sync_models.
+ * Uses the shared DB connection (getDb) and UPSERT for atomicity.
+ * @param {string} url - JSON URL with format: {"models":[{"id":"p/m","tier":"S+","swe_score":"...","ctx":"..."}]}
+ * @returns {number} Number of models synced
+ */
+async function syncSweBenchScores(url) {
+  if (!url) return 0;
+  // Restrict to HTTPS for SSRF protection
+  if (!url.startsWith('https://')) {
+    console.log('[SWE-bench] Only HTTPS URLs allowed');
+    return 0;
+  }
+  try {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(30000) });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    const models = data.models || [];
+    if (!Array.isArray(models)) throw new Error('Invalid format: expected models array');
+
+    const db = getDb();
+    // Ensure sync_models table with consistent schema
+    db.exec(`CREATE TABLE IF NOT EXISTS sync_models (
+      provider TEXT NOT NULL, model_id TEXT NOT NULL,
+      label TEXT DEFAULT '', tier TEXT DEFAULT 'B',
+      swe_score TEXT DEFAULT '', ctx TEXT DEFAULT '128k',
+      PRIMARY KEY (provider, model_id)
+    )`);
+    db.exec("CREATE INDEX IF NOT EXISTS idx_sync_models_provider ON sync_models(provider)");
+
+    let count = 0;
+    for (const m of models) {
+      if (!m.id || !m.tier) continue;
+      const parts = m.id.split('/');
+      const provider = parts.length > 1 ? parts[0] : '';
+      const modelId = parts.length > 1 ? parts.slice(1).join('/') : m.id;
+      if (!provider) continue;
+      // UPSERT: insert if new, update tier/swe_score if exists
+      db.prepare(
+        "INSERT INTO sync_models (provider, model_id, tier, swe_score, ctx, label) VALUES (?, ?, ?, ?, ?, '') " +
+        "ON CONFLICT(provider, model_id) DO UPDATE SET tier = excluded.tier, swe_score = excluded.swe_score, ctx = excluded.ctx"
+      ).run(provider, modelId, m.tier, m.swe_score || '', m.ctx || '');
+      count++;
+    }
+
+    setMeta('swe_bench_last_sync', String(Date.now()));
+    console.log(`[SWE-bench] Synced ${count} model scores`);
+    return count;
+  } catch (err) {
+    console.log('[SWE-bench] Sync failed:', err.message);
+    return 0;
+  }
+}
+
+/**
  * Detect if a JSON object is litellm's format (model_id → metadata)
  * vs our format ({ providers: {...} })
  */
@@ -286,12 +340,9 @@ function ensureSyncTables(db) {
   try {
     db.exec(`
       CREATE TABLE IF NOT EXISTS sync_models (
-        provider TEXT NOT NULL,
-        model_id TEXT NOT NULL,
-        label TEXT DEFAULT '',
-        tier TEXT DEFAULT 'B',
-        swe_score TEXT DEFAULT '',
-        ctx TEXT DEFAULT '128k',
+        provider TEXT NOT NULL, model_id TEXT NOT NULL,
+        label TEXT DEFAULT '', tier TEXT DEFAULT 'B',
+        swe_score TEXT DEFAULT '', ctx TEXT DEFAULT '128k',
         PRIMARY KEY (provider, model_id)
       )
     `);
@@ -409,4 +460,5 @@ module.exports = {
   setCatalogUrl,
   ensureSyncTables,
   applyLitellmCatalog,
+  syncSweBenchScores,
 };

@@ -881,41 +881,14 @@ Make sure the proxy is running (flap / free-llm-api-provider).
     // Auto-sync catalog on startup
     syncCatalog().catch(err => console.warn('[CLI] Catalog sync 失败:', err.message));
     
-    // Auto-sync SWE-bench scores if URL configured (use repo default if none)
+    // Auto-sync SWE-bench scores if URL configured
     try {
       const sweUrl = getMeta('swe_bench_url') || 'https://raw.githubusercontent.com/liwoyuandiane/free-llm-api-provider/main/swe-bench.json';
       if (sweUrl) {
-        (async () => {
-          try {
-            const { setMeta: sm } = require('./db');
-            const resp = await fetch(sweUrl, { signal: AbortSignal.timeout(15000) });
-            if (!resp.ok) return;
-            const data = await resp.json();
-            const models = data.models || [];
-            if (!Array.isArray(models)) return;
-            const { DatabaseSync } = require('node:sqlite');
-            const path = require('path');
-            const DB_PATH = path.join(process.env.DATA_DIR || path.resolve(__dirname, '..', '.data'), 'data.db');
-            const db = new DatabaseSync(DB_PATH);
-            try {
-              db.exec('CREATE TABLE IF NOT EXISTS sync_models (provider TEXT, model_id TEXT, tier TEXT, swe_score TEXT, UNIQUE(provider, model_id))');
-              let count = 0;
-              for (const m of models) {
-                if (!m.id || !m.tier) continue;
-                const parts = m.id.split('/');
-                const provider = parts.length > 1 ? parts[0] : '';
-                const modelId = parts.length > 1 ? parts.slice(1).join('/') : m.id;
-                if (provider) {
-                  db.prepare('UPDATE sync_models SET tier = ?, swe_score = ? WHERE model_id = ? AND provider = ?')
-                    .run(m.tier, m.swe_score || '', modelId, provider);
-                }
-                count++;
-              }
-              sm('swe_bench_last_sync', String(Date.now()));
-              if (count > 0) console.log(`[Auto] 已同步 ${count} 个 SWE-bench 评分`);
-            } finally { if (db) try { db.close(); } catch {} }
-          } catch {}
-        })();
+        const { syncSweBenchScores } = require('./sync');
+        syncSweBenchScores(sweUrl).then(n => {
+          if (n > 0) console.log(`[Auto] 已同步 ${n} 个 SWE-bench 评分`);
+        }).catch(() => {});
       }
     } catch {}
     
