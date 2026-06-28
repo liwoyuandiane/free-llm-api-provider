@@ -879,18 +879,13 @@ Make sure the proxy is running (flap / free-llm-api-provider).
     // Auto-sync catalog on startup
     syncCatalog().catch(err => console.warn('[CLI] Catalog sync 失败:', err.message));
     
-    // Auto-sync SWE-bench scores if URL configured
+    // Auto-sync SWE-bench scores if URL configured (use repo default if none)
     try {
-      const sweUrl = getMeta('swe_bench_url');
+      const sweUrl = getMeta('swe_bench_url') || 'https://raw.githubusercontent.com/liwoyuandiane/free-llm-api-provider/main/swe-bench.json';
       if (sweUrl) {
         const { handleSweBenchSync } = require('./admin');
         const http = require('http');
-        const mockRes = {
-          _status: 0, _data: null,
-          writeHead(s, h) { this._status = s; },
-          end(d) { try { this._data = JSON.parse(d); } catch { this._data = d; } },
-        };
-        handleSweBenchSync({ body: { url: sweUrl } }, mockRes).catch(() => {});
+        handleSweBenchSync({ body: { url: sweUrl } }, { _status: 0, _data: null, writeHead(s,h) { this._status = s; }, end(d) { try { this._data = JSON.parse(d); } catch { this._data = d; } } }).catch(() => {});
       }
     } catch {}
     

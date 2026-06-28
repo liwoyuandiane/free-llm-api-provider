@@ -1164,12 +1164,12 @@ async function sBT(){
 /**
  * lS — 加载已保存的 SWE-bench URL
  */
+const SWE_BENCH_DEFAULT_URL = 'https://raw.githubusercontent.com/liwoyuandiane/free-llm-api-provider/main/swe-bench.json';
 async function lS(){
   const r=await api('/swe-bench/url',{method:'GET'});
-  if(r.url){
-    document.getElementById('sweBenchUrl').value=r.url;
-    document.getElementById('sweBenchStatus').textContent='上次同步: '+r.lastSyncStr;
-  }
+  const url = r.url || SWE_BENCH_DEFAULT_URL;
+  document.getElementById('sweBenchUrl').value = url;
+  document.getElementById('sweBenchStatus').textContent = r.lastSyncStr ? '上次同步: '+r.lastSyncStr : '已配置默认 URL，启动时自动同步';
 }
 
 // ── 全局缓存 ──
