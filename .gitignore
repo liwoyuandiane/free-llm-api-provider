@@ -66,3 +66,6 @@ opencode.json
 
 # Backup directory
 backups/
+
+# Test startup script
+start.sh

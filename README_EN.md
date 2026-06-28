@@ -90,72 +90,57 @@
 
 ## Quick Start
 
-### 1. Install
+### Option 1: Docker (Recommended)
 
 ```bash
-npm install -g free-llm-api-provider
-```
-
-> You can also use `npx free-llm-api-provider` without installing, but global install enables the `flap` shorthand.
-
-### 2. Configure API Keys (One-time)
-
-```bash
-flap config
-```
-
-Interactive wizard prompts for keys. Need only **one** to start. More = better failover.
-
-**Recommended first key**: Groq — https://console.groq.com/keys (30 RPM, no credit card)
-
-**You can also set keys via environment variables:**
-```bash
-export GROQ_API_KEY="your_key_here"
-export NVIDIA_API_KEY="your_key_here"
-export OPENROUTER_API_KEY="your_key_here"
-```
-
-**Multi-key support**: Add multiple keys for the same provider:
-```bash
-# Add multiple keys in the config wizard
-# The proxy tries all keys before failing over to the next provider
-```
-
-**Where are keys stored?**
-- SQLite database: `.data/data.db` (all data stored here)
-- Default port: `4002` (customize via `FLAP_PORT` or `PORT` env var)
-- Or via environment variables (env vars override database)
-
-**Server API Key**: On first run, generates a cryptographically random API key (`sk-<64 hex chars>`) stored in SQLite database. Used by AI clients to connect to the proxy. Override with `FLAP_API_KEY` env var.
-
-### 3. Start Proxy
-
-```bash
-flap
-```
-
-Proxy runs at `http://localhost:4002`.
-
-### Docker Deployment
-
-```bash
-# Pull from GitHub Container Registry
+# Pull the image
 docker pull ghcr.io/liwoyuandiane/free-llm-api-provider:main
 
-# Run from any directory (database saved in current dir)
+# Start (database saved in current directory)
 cd /your/working/dir
 docker run -d \
   --name flap \
   -p 4002:4002 \
   -e DATA_DIR=/app/data \
-  -e FLAP_API_KEY=your-key \
-  -e FLAP_ADMIN_PASSWORD=admin-password \
+  -e FLAP_ADMIN_PASSWORD=your-admin-password \
   -e GROQ_API_KEY=your-key \
   -v $(pwd):/app/data \
   ghcr.io/liwoyuandiane/free-llm-api-provider:main
 ```
 
-### 4. Configure Your AI Client
+After startup, open **http://localhost:4002/admin** and login with `admin` / your password.
+
+> **Docker Compose** is also supported: put the params in `docker-compose.yml`, then `docker compose up -d`.
+
+### Option 2: Node.js Direct
+
+Requires **Node.js >= 22.5** (uses built-in `node:sqlite` module).
+
+```bash
+# Clone the project
+git clone https://github.com/liwoyuandiane/free-llm-api-provider.git
+cd free-llm-api-provider
+
+# Start the proxy
+node src/cli.js
+```
+
+After startup, open **http://localhost:4002/admin**, default credentials `admin` / `admin123`.
+
+> You can also install globally via npm: `npm install -g free-llm-api-provider`, then use the `flap` command.
+
+### Configure API Keys
+
+Add API keys in the admin UI "Providers" tab, or set via environment variables:
+
+```bash
+export GROQ_API_KEY="your_key_here"
+export NVIDIA_API_KEY="your_key_here"
+```
+
+**Recommended first key**: Groq — https://console.groq.com/keys (30 RPM, no credit card)
+
+### Configure Your AI Client
 
 | Client | Base URL | API Key |
 |--------|----------|---------|
@@ -327,12 +312,20 @@ Use tier aliases: `tier-splus`, `tier-s`, `tier-aplus`, `tier-a`, `tier-aminus`,
 
 ## Data Storage
 
-All configuration is stored in the SQLite database `.data/data.db`. API keys are encrypted with AES-256-GCM.
+All configuration is stored in the SQLite database `.data/data.db`. API keys are encrypted with AES-256-GCM. The encryption key is stored in `.data/.env`.
+
+**`.data/.env` file**: Stores encryption key and provider API keys:
+```
+ENCRYPTION_KEY=abc123...
+GROQ_API_KEY=gsk_...
+NVIDIA_API_KEY=nvapi-...
+```
+> Environment variables have highest priority, `.env` file is second, database is last.
 
 **Priority:**
 1. Environment variables (highest)
-2. SQLite database
-3. Multiple keys (tries all before failing over)
+2. `.data/.env` file
+3. SQLite database
 
 ## Data Directory
 

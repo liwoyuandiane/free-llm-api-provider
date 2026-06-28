@@ -291,6 +291,18 @@ function getSyncedModels(providerKey) {
 }
 
 /**
+ * Get all sync'ed models across all providers
+ */
+function getAllSyncedModels() {
+  try {
+    const db = new DatabaseSync(DB_PATH);
+    const rows = db.prepare('SELECT provider, model_id, label, tier, swe_score, ctx FROM sync_models ORDER BY provider, rowid').all();
+    db.close();
+    return rows.map(r => ({ provider: r.provider, id: r.model_id, label: r.label, tier: r.tier, swe_score: r.swe_score, ctx: r.ctx }));
+  } catch { return []; }
+}
+
+/**
  * Get sync'ed provider URL (overrides static URL)
  */
 function getSyncedProviderUrl(providerKey) {
@@ -366,6 +378,7 @@ module.exports = {
   syncCatalog,
   exportCatalog,
   getSyncedModels,
+  getAllSyncedModels,
   getSyncedProviderUrl,
   getCatalogUrl,
   setCatalogUrl,
