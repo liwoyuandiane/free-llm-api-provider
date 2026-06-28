@@ -4,27 +4,101 @@
  * Serves a single-page admin panel at /admin and REST API at /api/admin/*
  */
 
+const crypto = require('crypto');
+
+// Login rate limiting (in-memory, 15 min window, 10 attempts max)
+const LOGIN_RATE_WINDOW = 15 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 10;
+const _loginAttempts = new Map();
+
+function _checkLoginRate(ip) {
+  const now = Date.now();
+  const cutoff = now - LOGIN_RATE_WINDOW;
+  let attempts = _loginAttempts.get(ip);
+  if (!attempts) { _loginAttempts.set(ip, []); return true; }
+  attempts = attempts.filter(t => t > cutoff);
+  _loginAttempts.set(ip, attempts);
+  return attempts.length < LOGIN_MAX_ATTEMPTS;
+}
+
+function _recordLoginAttempt(ip) {
+  const attempts = _loginAttempts.get(ip) || [];
+  attempts.push(Date.now());
+  _loginAttempts.set(ip, attempts);
+}
+
 const { loadConfig, saveConfig, addApiKey, removeApiKey, getAllApiKeys, getServerApiKey } = require('./config');
 const { sources, MODELS, getModelsByProvider } = require('./models');
 const { runHealthCheck, getHealthyProviders } = require('./health-checker');
-const { verifyAdminLogin, createSession, validateSession, deleteSession, updateSessionUsername, getMeta, setMeta, getDiscoveredModels: dbGetDiscoveredModels, saveDiscoveredModels, getAllProviderKeys, addProviderKey, updateProviderKeyNotes, removeProviderKey, removeAllProviderKeys, setProviderEnabled, isProviderEnabled, regenerateServerApiKey, setModelEnabled, getAllModelStates, getCustomProviders, saveCustomProvider, deleteCustomProvider, setCustomProviderEnabled, getCustomProviderModels, saveCustomProviderModel, deleteCustomProviderModel, changeAdminPassword, changeAdminUsername, getAdminUsername, getProviderTestModel, setProviderTestModel, setModelTier, getAllModelTiers, getServerApiKey: dbGetServerApiKey, isUsingDefaultPassword, markPasswordChanged, getAllProviderPriorities, setProviderPriority, deleteProviderPriority } = require('./db');
+const { verifyAdminLogin, createSession, validateSession, deleteSession, updateSessionUsername, getMeta, setMeta, getDiscoveredModels: dbGetDiscoveredModels, saveDiscoveredModels, getAllProviderKeys, addProviderKey, updateProviderKeyNotes, removeProviderKey, removeAllProviderKeys, setProviderEnabled, isProviderEnabled, regenerateServerApiKey, setModelEnabled, getAllModelStates, getCustomProviders, saveCustomProvider, deleteCustomProvider, setCustomProviderEnabled, getCustomProviderModels, saveCustomProviderModel, deleteCustomProviderModel, changeAdminPassword, changeAdminUsername, getAdminUsername, getProviderTestModel, setProviderTestModel, setModelTier, getAllModelTiers, getServerApiKey: dbGetServerApiKey, isUsingDefaultPassword, markPasswordChanged, getAllProviderPriorities, setProviderPriority, deleteProviderPriority, getAllProviderSettings } = require('./db');
+
+const _SIGNUP_URLS = {
+  nvidia: 'https://build.nvidia.com/settings/api-keys',
+  groq: 'https://console.groq.com/keys',
+  cerebras: 'https://cloud.cerebras.ai',
+  openrouter: 'https://openrouter.ai/keys',
+  huggingface: 'https://huggingface.co/settings/tokens',
+  codestral: 'https://console.mistral.ai/api-keys/',
+  googleai: 'https://aistudio.google.com/apikey',
+  siliconflow: 'https://siliconflow.com/',
+  cloudflare: 'https://dash.cloudflare.com/',
+  zai: 'https://z.ai/manage-apikey/apikey-list',
+  ovhcloud: 'https://endpoints.ai.cloud.ovh.net/',
+  github: 'https://github.com/settings/tokens',
+  cohere: 'https://dashboard.cohere.com/api-keys',
+  reka: 'https://platform.reka.ai/',
+  'opencode-zen': 'https://opencode.ai/auth',
+  'ollama-cloud': 'https://ollama.com/settings/keys',
+  'kilo-gateway': 'https://app.kilo.ai/',
+  'agnes-ai': 'https://platform.agnes-ai.com/',
+  'routeway': 'https://routeway.ai/',
+  'bazaarlink': 'https://bazaarlink.ai/',
+  'ainative-studio': 'https://ainative.studio/',
+  'aihorde': 'https://aihorde.net/register',
+};
+const _FREE_TIER_INFO = {
+  nvidia: '40 RPM (no credit card)',
+  groq: '30-50 RPM (no credit card)',
+  cerebras: '1M tokens/day (no credit card)',
+  openrouter: '50 req/day free, 1K/day with $10',
+  huggingface: '~$0.10/month free credits',
+  codestral: '30 RPM, 2K/day',
+  googleai: '14.4K req/day',
+  siliconflow: '100 req/day + $1 credits',
+  cloudflare: '10K neurons/day',
+  zai: 'Generous free quota',
+  ovhcloud: '2 req/min/IP free, 400 RPM with key',
+  github: 'Rate limited (free)',
+  cohere: 'Free trial tier',
+  reka: 'Free tier available',
+  pollinations: 'Anonymous (no key needed)',
+  llm7: 'Anonymous (no key needed)',
+  'opencode-zen': 'Free promo models (rotating)',
+  'ollama-cloud': '~10-20M tokens/month free',
+  'kilo-gateway': '200/hr per IP (no key needed)',
+  'agnes-ai': 'Free tier with API key',
+  'routeway': 'Free tier with API key',
+  'bazaarlink': 'Free tier with API key',
+  'ainative-studio': 'Free tier with API key',
+  'aihorde': 'Community-powered, anonymous (slow)',
+};
 
 /**
  * getAdminInitialData — 获取管理面板初始数据
  * 从 config.json 读取配置、API Key、启用提供商、模型状态等信息，供前端 HTML 页面使用
- * @returns {object} 包含 allProviders, enabledProviders, apiKeys, modelStates, modelTiers, 
+ * @returns {object} 包含 allProviders, enabledProviders, apiKeys, modelStates, modelTiers,
  *   allStaticModels, testModels, serverApiKey, adminUsername 等字段的对象
  */
 function getAdminInitialData() {
   const config = loadConfig();
   const allProviders = Object.entries(sources)
-    .filter(([_, v]) => v.url && !v.cliOnly && !v.zenOnly)
-    .map(([k, v]) => ({ key: k, name: v.name, url: v.url }));
+    .filter(([_, v]) => v.url && !v.cliOnly)
+    .map(([k, v]) => ({ key: k, name: v.name, url: v.url, signupUrl: _SIGNUP_URLS[k] || '', freeInfo: _FREE_TIER_INFO[k] || '', noKeyRequired: !!v.noKeyRequired }));
   const serverApiKey = getServerApiKey(config);
   // Embed enabled states
   const enabledProviders = {};
   for (const [k, v] of Object.entries(sources)) {
-    if (v.url && !v.cliOnly && !v.zenOnly) {
+    if (v.url && !v.cliOnly) {
       try { enabledProviders[k] = isProviderEnabled(k); }
       catch { enabledProviders[k] = config.providers?.[k]?.enabled !== false; }
     }
@@ -42,7 +116,7 @@ function getAdminInitialData() {
   }
   // Environment variable keys (add if not already in database)
   for (const [prov, src] of Object.entries(sources)) {
-    if (!src.url || src.cliOnly || src.zenOnly) continue;
+    if (!src.url || src.cliOnly) continue;
     if (apiKeys[prov] && apiKeys[prov].length > 0) continue;
     const envKeys = getAllApiKeys(config, prov);
     if (envKeys.length > 0) {
@@ -197,6 +271,14 @@ function getAdminHtml() {
   --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
   --transition: 0.15s ease;
   --sidebar-bg: #111113;
+  /* 内联样式简写别名 */
+  --dim: var(--text-secondary);
+  --b2: var(--border);
+  --mut: var(--text-muted);
+  --red: var(--danger);
+  --green: var(--success);
+  --yellow: var(--warning);
+  --blue: var(--accent);
 }
 .light {
   --bg: #ffffff;
@@ -283,7 +365,7 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang S
 .ke .ka{display:flex;gap:6px;flex-shrink:0}
 .ke .ka button{padding:4px 10px;border:none;border-radius:var(--radius-sm);background:transparent;color:var(--text-muted);font-size:var(--font-sm);cursor:pointer;white-space:nowrap;transition:var(--transition)}
 .ke .ka button:hover{color:var(--text);background:var(--card-hover)}
-.ke .ka .ka-del:hover{color:var(--danger)}.ke .ka .ka-edit{font-size:var(--font-base)}
+.ke .ka .ka-del:hover{color:var(--danger)}
 .ke input.kn-input{flex:1;background:var(--bg);border:1px solid var(--accent);border-radius:var(--radius-sm);color:var(--text);font-size:var(--font-sm);padding:6px 10px;outline:none;min-width:0}
 
 /* ── Buttons ── */
@@ -415,7 +497,7 @@ tr:hover td{background:var(--card-hover)}
       </div>
       <div class="c">
         <div class="ct" style="margin-bottom:10px">添加 API Key</div>
-        <div class="fr"><label>提供商</label><select id="nkp" style="flex:1" onchange="onNKPChange()"><option value="">选择...</option></select></div>
+        <div class="fr"><label>提供商</label><select id="nkp" style="flex:1" onchange="onNKPChange()"><option value="">选择...</option></select><a id="signupLink" href="#" target="_blank" rel="noopener" style="display:none;font-size:13px;white-space:nowrap;margin-left:8px;color:var(--accent);text-decoration:underline">获取 Key ↗</a></div>
         <div id="customProviderFields" style="display:none">
           <div class="fr"><label>名称</label><input type="text" id="cpName" placeholder="任意名称" style="flex:1"></div>
           <div class="fr"><label>URL</label><input type="text" id="cpUrl" placeholder="https://api.example.com/v1/chat/completions" style="flex:1"></div>
@@ -463,9 +545,9 @@ tr:hover td{background:var(--card-hover)}
         <div id="pgChat" class="pg-chat" style="min-height:200px;max-height:500px;overflow-y:auto;margin-bottom:10px"></div>
         <div class="pg-inp">
           <textarea id="pgInput" placeholder="输入消息... (Enter 发送, Ctrl+Enter 换行)" rows="2" onkeydown="if(event.key==='Enter'&&!event.ctrlKey&&!event.shiftKey){event.preventDefault();pgSend()}"></textarea>
-          <div style="display:flex;flex-direction:column;gap:6px">
-            <button class="btn btn-p" onclick="pgSend()">发送</button>
-            <button class="btn btn-sm" onclick="pgClear()" style="font-size:12px;color:var(--text-muted)">清除</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-p" onclick="pgSend()" style="flex:1">发送</button>
+            <button class="btn" onclick="pgClear()" style="flex:1">清除</button>
           </div>
         </div>
       </div>
@@ -529,6 +611,18 @@ tr:hover td{background:var(--card-hover)}
           <button class="btn btn-sm" onclick="sBE()">导出当前评分</button>
         </div>
         <p id="sweBenchStatus" style="font-size:12px;color:var(--mut);margin-top:6px"></p>
+      </div>
+      <div class="c">
+        <div class="ct" style="margin-bottom:4px">配置导出与导入</div>
+        <p style="font-size:14px;color:var(--dim);margin-bottom:10px">导出所有提供商配置、API Key、模型等级等数据，用密码加密保存为 JSON 文件，可在新实例中导入恢复。</p>
+        <div class="fr"><label>导出密码</label><input type="password" id="exportPw" placeholder="加密密码（至少4位）" style="flex:1"></div>
+        <div class="fr"><label>确认密码</label><input type="password" id="exportPw2" placeholder="再次输入密码" style="flex:1"></div>
+        <button class="btn btn-p" onclick="exportConfig()">导出加密配置</button>
+        <div style="border-top:1px solid var(--b2);margin:12px 0"></div>
+        <div class="fr"><label>导入密码</label><input type="password" id="importPw" placeholder="解密密码" style="flex:1"></div>
+        <div class="fr"><label>选择文件</label><input type="file" id="importFile" accept=".json" style="flex:1"></div>
+        <button class="btn btn-p" onclick="importConfig()">导入配置</button>
+        <p id="importExportStatus" style="font-size:12px;color:var(--mut);margin-top:6px"></p>
       </div>
     </div>
 
@@ -680,7 +774,6 @@ async function rP() {
                 '<span class="kn' + (!nt ? ' kn-empty' : '') + '" onclick="edn(this,\\'' + jsesc(p.key) + '\\',\\'' + jsesc(ks2) + '\\')">' + (esc(nt) || '添加备注...') + '</span>' +
                 '<span class="kt">' + stText + '</span>' +
                 '<span class="ka">' +
-                  '<button class="ka-edit" onclick="edn(this.closest(\\'.ke\\').querySelector(\\'.kn\\'),\\'' + jsesc(p.key) + '\\',\\'' + jsesc(ks2) + '\\')">✏️</button>' +
                   '<button onclick="tsk(\\'' + jsesc(p.key) + '\\',\\'' + jsesc(ks2) + '\\')">检查</button>' +
                   '<button class="ka-del" onclick="dk(\\'' + jsesc(p.key) + '\\',\\'' + jsesc(ks2) + '\\')">移除</button>' +
                 '</span></div>';
@@ -715,7 +808,7 @@ async function rP() {
     }
   } catch(e) {
     // [Fix 2026-06-24] 显示更详细的错误信息
-    el.innerHTML = '<div class="empty" style="color:var(--red)">加载失败: ' + (e?.message || e) + '<br><small style="color:var(--mut)">请按 F12 打开开发者工具查看 Network 标签</small></div>';
+    el.innerHTML = '<div class="empty" style="color:var(--red)">加载失败: ' + esc(e?.message || e) + '<br><small style="color:var(--mut)">请按 F12 打开开发者工具查看 Network 标签</small></div>';
     console.error('[rP] error:', e?.message, e?.stack);
     t('加载失败: ' + (e?.message || e), 'err');
   }
@@ -809,7 +902,29 @@ async function aPK(){const p=document.getElementById('nkp').value,k=document.get
 /**
  * onNKPChange — 选择自定义供应商时显示额外字段
  */
-function onNKPChange(){const el=document.getElementById('customProviderFields');if(!el)return;el.style.display=document.getElementById('nkp').value==='__custom__'?'':'none';}
+function onNKPChange(){
+  const sel=document.getElementById('nkp');
+  const link=document.getElementById('signupLink');
+  const cf=document.getElementById('customProviderFields');
+  if(link){
+    const pv=sel.value;
+    if(pv && pv!=='__custom__'){
+      const pr=initData.allProviders||[];
+      const found=pr.find(p=>p.key===pv);
+      if(found && found.signupUrl){
+        link.href=found.signupUrl;
+        link.style.display='inline';
+        if(found.noKeyRequired) link.textContent='无需 Key（匿名使用）';
+        else link.textContent='获取 Key ↗';
+      } else {
+        link.style.display='none';
+      }
+    } else {
+      link.style.display='none';
+    }
+  }
+  if(cf) cf.style.display=pv==='__custom__'?'':'none';
+}
 /**
  * stm — 设置提供商的测试模型
  * @param {string} prov - 提供商 key
@@ -871,19 +986,21 @@ async function svkn(prov,key,inp){
   const val=inp.value.trim();
   await skn(prov,key,val);
   // 更新 initData 以便下次渲染时显示新备注
+  // initData 中的 key 是脱敏格式（sk-abc1...xyz9），需要匹配
+  const maskedKey = key.length > 12 ? key.slice(0,8) + '...' + key.slice(-4) : key;
   const km=initData.apiKeys||{};
   const pks=km[prov]||[];
   let found=false;
   for(let i=0;i<pks.length;i++){
     const k=pks[i];
     const k2=typeof k==='string'?k:(k.key||k);
-    if(k2===key){
+    if(k2===maskedKey){
       if(typeof k==='object'){k.notes=val;found=true;}
-      else{pks[i]={key,notes:val};found=true;}
+      else{pks[i]={key:maskedKey,notes:val};found=true;}
       break;
     }
   }
-  if(!found){pks.push({key,notes:val});}
+  if(!found){pks.push({key:maskedKey,notes:val});}
   ednRestore(inp,prov,key);
 }
 /**
@@ -894,12 +1011,14 @@ async function svkn(prov,key,inp){
  */
 function ednRestore(inp,prov,key){
   const span=document.createElement('span');
+  // initData 中的 key 是脱敏格式，需匹配
+  const maskedKey = key.length > 12 ? key.slice(0,8) + '...' + key.slice(-4) : key;
   const km=initData.apiKeys||{};
   const pks=km[prov]||[];
   let nt='';
   for(const k of pks){
     const k2=typeof k==='string'?k:(k.key||k);
-    if(k2===key){nt=typeof k==='object'&&k.notes?k.notes:'';break;}
+    if(k2===maskedKey){nt=typeof k==='object'&&k.notes?k.notes:'';break;}
   }
   span.className='kn'+(!nt?' kn-empty':'');
   span.textContent=nt||'添加备注...';
@@ -1017,7 +1136,12 @@ async function pgSend(){
   const inp=document.getElementById('pgInput'),chat=document.getElementById('pgChat');
   const msg=inp.value.trim();if(!msg)return;
   const model=document.getElementById('pgModel').value,stream=document.getElementById('pgStream').checked;
-  const apiKey=document.getElementById('serverKey').textContent;
+  // 确保使用完整服务器 API Key（非截断版本）
+  let apiKey=_fullServerKey||document.getElementById('serverKey').textContent;
+  if(!apiKey||apiKey.includes('...')){
+    try{const r=await api('/server-key');if(r.key){_fullServerKey=r.key;apiKey=r.key;}}catch{}
+  }
+  apiKey=apiKey||'';
   chat.innerHTML+='<div class="pg-msg user">'+esc(msg)+'</div>';
   inp.value='';chat.scrollTop=chat.scrollHeight;
 
@@ -1037,7 +1161,14 @@ async function pgSend(){
       body:JSON.stringify({model,messages,stream,max_tokens:1024})
     });
     const provider=resp.headers.get('X-Provider')||'unknown';
-    if(!resp.ok){msgDiv.innerHTML='<span style="color:var(--red)">HTTP '+resp.status+'</span>';chat.scrollTop=chat.scrollHeight;return;}
+    if(!resp.ok){
+      let errDetail='';
+      try{const e=await resp.json();if(e.error)errDetail=e.error;}catch{}
+      msgDiv.innerHTML='<span style="color:var(--red)">HTTP '+resp.status+
+        (provider!=='unknown'?' ('+esc(provider)+')':'')+
+        (errDetail?': '+esc(errDetail):'')+'</span>';
+      chat.scrollTop=chat.scrollHeight;return;
+    }
 
     if(stream){
       const reader=resp.body.getReader();const decoder=new TextDecoder();let done=false,buffer='',contents='',streamModel='',streamError='';
@@ -1116,7 +1247,7 @@ async function rS(){
 /**
  * rK — 重新生成服务器 API Key
  */
-async function rK(){if(!confirm('确定重新生成 API Key？'))return;const r=await api('/key/regenerate',{method:'POST'});if(r.key){document.getElementById('serverKey').textContent=r.key;t('新 Key: '+r.key.slice(0,12)+'...');}}
+async function rK(){if(!confirm('确定重新生成 API Key？'))return;const r=await api('/key/regenerate',{method:'POST'});if(r.key){document.getElementById('serverKey').textContent=r.key;_fullServerKey=r.key;t('新 Key: '+r.key.slice(0,12)+'...');}}
 /**
  * cPw — 修改管理员密码
  */
@@ -1184,6 +1315,60 @@ async function sBE(){
   t('已导出 '+r.models.length+' 个模型评分');
 }
 
+// ── 配置导出/导入 ──
+
+/**
+ * exportConfig — 导出加密配置
+ * 读取用户输入的密码，调用 API 加密导出所有配置并下载
+ */
+async function exportConfig(){
+  const pw1=document.getElementById('exportPw').value;
+  const pw2=document.getElementById('exportPw2').value;
+  if(!pw1||pw1.length<4){t('密码至少4位','err');return;}
+  if(pw1!==pw2){t('两次密码不一致','err');return;}
+  const st=document.getElementById('importExportStatus');
+  st.textContent='正在加密导出...';
+  const r=await api('/export',{method:'POST',body:{password:pw1}});
+  if(r.error){st.textContent='';t(r.error,'err');return;}
+  const blob=new Blob([JSON.stringify(r,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='flap-config-export-'+new Date().toISOString().slice(0,10)+'.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  document.getElementById('exportPw').value='';
+  document.getElementById('exportPw2').value='';
+  st.textContent='✅ 已导出配置，文件已下载';
+  t('配置已导出');
+}
+
+/**
+ * importConfig — 导入加密配置
+ * 读取用户选择的加密文件和密码，调用 API 解密并导入所有配置
+ */
+async function importConfig(){
+  const pw=document.getElementById('importPw').value;
+  const fInput=document.getElementById('importFile');
+  if(!pw){t('请输入解密密码','err');return;}
+  if(!fInput.files.length){t('请选择要导入的文件','err');return;}
+  const st=document.getElementById('importExportStatus');
+  st.textContent='正在导入配置...';
+  try {
+    const text=await fInput.files[0].text();
+    let data;
+    try{data=JSON.parse(text);}catch{st.textContent='';t('文件格式错误','err');return;}
+    if(!data.type||data.type!=='flap-config-export'){st.textContent='';t('这不是有效的导出文件','err');return;}
+    const r=await api('/import',{method:'POST',body:{password:pw,data}});
+    if(r.error){st.textContent='';t(r.error,'err');return;}
+    st.textContent='✅ 配置导入成功，正在刷新页面...';
+    t('配置导入成功');
+    setTimeout(()=>location.reload(),1500);
+  } catch(e){
+    st.textContent='';
+    t('读取文件失败: '+e.message,'err');
+  }
+}
+
 /**
  * lS — 加载已保存的 SWE-bench URL
  */
@@ -1199,6 +1384,8 @@ async function lS(){
 
 /** initData 中的 Key 已掩码，需要从 API 获取完整 Key 用于操作 */
 let _fullKeyCache = {};
+/** 完整服务器 API Key 缓存（Playground 使用） */
+let _fullServerKey = null;
 
 /**
  * _resolveKey — 从缓存中查找完整 API Key
@@ -1224,6 +1411,10 @@ if(localStorage.getItem('flapTheme')==='light')document.body.classList.add('ligh
   const k = initData.serverApiKey;
   if (k) document.getElementById('serverKey').textContent = k;
 })();
+// 通过已认证 API 获取完整服务器 Key（Playground 需要）
+(async function initFullServerKey(){
+  try{const r=await api('/server-key');if(r.key)_fullServerKey=r.key;}catch(e){}
+})();
 if (initData.adminUsername) {
   const userEl = document.getElementById('curUser');
   if (userEl) userEl.textContent = initData.adminUsername;
@@ -1232,6 +1423,11 @@ loadSK().catch(err => console.warn('[Admin] loadSK 失败:', err));
 rP().catch(err => console.warn('[Admin] rP 失败:', err));
 rPP().catch(err => console.warn('[Admin] rPP 失败:', err));
 lS().catch(err => console.warn('[Admin] lS 失败:', err));
+// 健康页自动刷新（仅当页面可见时）
+setInterval(() => {
+  const hp = document.getElementById('p-health');
+  if (hp && hp.classList.contains('active')) rH();
+}, 10000);
 document.addEventListener('keydown',e=>{if(e.key==='Escape')cDM();});
 </script>
 
@@ -1580,7 +1776,11 @@ async function handleSetProviderPriority(req, res) {
   if (!provider) return jsonResponse(res, 400, { error: 'Missing provider' });
   if (!/^[\w-]{1,100}$/.test(provider)) return jsonResponse(res, 400, { error: 'Invalid provider name' });
   if (priority === undefined || priority === null) return jsonResponse(res, 400, { error: 'Missing priority' });
-  setProviderPriority(provider, Number(priority));
+  const numPriority = Number(priority);
+  if (!Number.isFinite(numPriority) || !Number.isInteger(numPriority) || numPriority < 0 || numPriority > 999) {
+    return jsonResponse(res, 400, { error: 'Priority must be an integer between 0 and 999' });
+  }
+  setProviderPriority(provider, numPriority);
   jsonResponse(res, 200, { success: true });
 }
 
@@ -1649,11 +1849,14 @@ async function handleSweBenchExport(res) {
     // Static models with SWE-bench scores
     for (const m of MODELS) {
       const [modelId, name, tier, swe_score, ctx, provider] = m;
-      if (provider && tier) {
+      if (provider) {
         const key = provider + '/' + modelId;
-        // Apply user override if exists
-        const finalTier = userTiers[key] || tier;
-        models.push({ id: key, tier: finalTier, swe_score: swe_score || '', ctx: ctx || '' });
+        // Apply user override if exists, otherwise use static tier
+        const finalTier = userTiers[key] || tier || '';
+        const finalScore = swe_score || '';
+        if (finalTier || finalScore) {
+          models.push({ id: key, tier: finalTier, swe_score: finalScore, ctx: ctx || '' });
+        }
       }
     }
 
@@ -1682,13 +1885,13 @@ async function handleSweBenchExport(res) {
 async function handleGetConfig(res) {
   const config = loadConfig();
   const allProviders = Object.entries(sources)
-    .filter(([_, v]) => v.url && !v.cliOnly && !v.zenOnly)
-    .map(([k, v]) => ({ key: k, name: v.name, url: v.url }));
+    .filter(([_, v]) => v.url && !v.cliOnly)
+    .map(([k, v]) => ({ key: k, name: v.name, url: v.url, signupUrl: _SIGNUP_URLS[k] || '', freeInfo: _FREE_TIER_INFO[k] || '', noKeyRequired: !!v.noKeyRequired }));
 
   // Build enabled providers map (use SQLite)
   const enabledProviders = {};
   for (const [k, v] of Object.entries(sources)) {
-    if (v.url && !v.cliOnly && !v.zenOnly) {
+    if (v.url && !v.cliOnly) {
       try { enabledProviders[k] = isProviderEnabled(k); }
       catch { enabledProviders[k] = config.providers?.[k]?.enabled !== false; }
     }
@@ -1705,7 +1908,7 @@ async function handleGetConfig(res) {
   try { apiKeys = getAllProviderKeys(); } catch {}
   // Add environment variable keys if not in database
   for (const [k, src] of Object.entries(sources)) {
-    if (!src.url || src.cliOnly || src.zenOnly) continue;
+    if (!src.url || src.cliOnly) continue;
     if (apiKeys[k] && apiKeys[k].length > 0) continue;
     const envKeys = getAllApiKeys(config, k);
     if (envKeys.length > 0) {
@@ -1811,7 +2014,8 @@ async function handleRemoveSingleProviderKey(req, res) {
   if (key.length > 1024) {
     return jsonResponse(res, 400, { error: 'Key too long (max 1024 chars)' });
   }
-  removeProviderKey(provider, key);
+  const removed = removeProviderKey(provider, key);
+  if (!removed) return jsonResponse(res, 404, { error: 'Key not found' });
   jsonResponse(res, 200, { success: true });
 }
 
@@ -1893,7 +2097,9 @@ async function runKeyTest(res, url, provider, apiKey) {
 }
 
 async function handleRegenerateKey(res) {
+  const { invalidateServerKeyCache } = require('./proxy');
   const newKey = regenerateServerApiKey();
+  invalidateServerKeyCache();
   jsonResponse(res, 200, { key: newKey });
 }
 
@@ -1969,7 +2175,8 @@ async function handleDiscoverModels(req, res, providerKey) {
   if (providerKey.startsWith('custom_')) {
     const cpName = providerKey.slice(7);
     const cp = getCustomProviders().find(p => p.name === cpName);
-    if (cp && cp.api_key) apiKey = cp.api_key;
+    if (!cp) return jsonResponse(res, 400, { error: 'Unknown custom provider' });
+    if (cp.api_key) apiKey = cp.api_key;
     // For custom providers, use the name as the provider key for discovery
     realProviderKey = cpName;
   } else {
@@ -2064,6 +2271,165 @@ function requireAuthApi(req, res) {
 }
 
 /**
+ * handleExportConfig — 导出加密配置
+ * 收集所有提供商配置、API Key、模型等级等数据，用用户指定的密码加密后导出
+ */
+async function handleExportConfig(req, res) {
+  const body = await readJsonBody(req);
+  const { password } = body;
+  if (!password || password.length < 4)
+    return jsonResponse(res, 400, { error: '密码至少需要4位' });
+
+  // 收集所有配置数据
+  const exportData = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    apiKeys: getAllProviderKeys(),
+    customProviders: getCustomProviders().map(p => ({
+      name: p.name,
+      base_url: p.base_url,
+      api_key: p.api_key || '',
+      notes: p.notes || '',
+      enabled: p.enabled !== 0,
+      models: getCustomProviderModels(p.name).map(m => ({
+        model_id: m.model_id,
+        enabled: m.enabled !== 0
+      }))
+    })),
+    modelTiers: getAllModelTiers(),
+    modelStates: getAllModelStates(),
+    providerPriorities: getAllProviderPriorities(),
+    providerSettings: getAllProviderSettings()
+  };
+
+  // 使用 PBKDF2 + AES-256-GCM 加密
+  try {
+    const salt = crypto.randomBytes(16);
+    const iv = crypto.randomBytes(12);
+    const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha512');
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    let encrypted = cipher.update(JSON.stringify(exportData), 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    const tag = cipher.getAuthTag().toString('hex');
+
+    jsonResponse(res, 200, {
+      version: 1,
+      type: 'flap-config-export',
+      salt: salt.toString('hex'),
+      iv: iv.toString('hex'),
+      tag: tag,
+      data: encrypted,
+      exportedAt: exportData.exportedAt
+    });
+  } catch (err) {
+    console.error('[Admin] Export encryption error:', err.message);
+    jsonResponse(res, 500, { error: '加密失败: ' + err.message });
+  }
+}
+
+/**
+ * handleImportConfig — 导入加密配置
+ * 接收加密的配置文件和密码，解密后写入数据库
+ */
+async function handleImportConfig(req, res) {
+  const body = await readJsonBody(req);
+  const { password, data } = body;
+  if (!password) return jsonResponse(res, 400, { error: '请输入解密密码' });
+  if (!data || !data.salt || !data.iv || !data.tag || !data.data)
+    return jsonResponse(res, 400, { error: '配置文件格式不正确' });
+
+  let decrypted;
+  try {
+    const salt = Buffer.from(data.salt, 'hex');
+    const iv = Buffer.from(data.iv, 'hex');
+    const tag = Buffer.from(data.tag, 'hex');
+    const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha512');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    let decoded = decipher.update(data.data, 'hex', 'utf8');
+    decoded += decipher.final('utf8');
+    decrypted = JSON.parse(decoded);
+  } catch (err) {
+    return jsonResponse(res, 400, { error: '密码错误或文件已损坏' });
+  }
+
+  if (decrypted.version !== 1)
+    return jsonResponse(res, 400, { error: '不支持的导出版本: ' + decrypted.version });
+
+  try {
+    // 1. 导入 API Keys
+    if (decrypted.apiKeys && typeof decrypted.apiKeys === 'object') {
+      for (const [provider, keys] of Object.entries(decrypted.apiKeys)) {
+        if (Array.isArray(keys)) {
+          for (const entry of keys) {
+            const keyStr = typeof entry === 'string' ? entry : (entry.key || '');
+            const notes = typeof entry === 'object' ? (entry.notes || '') : '';
+            if (keyStr) addProviderKey(provider, keyStr, notes);
+          }
+        }
+      }
+    }
+
+    // 2. 导入自定义提供商
+    if (decrypted.customProviders && Array.isArray(decrypted.customProviders)) {
+      for (const cp of decrypted.customProviders) {
+        if (cp.name && cp.base_url) {
+          saveCustomProvider(cp.name, cp.base_url, cp.api_key || '', cp.notes || '');
+          setCustomProviderEnabled(cp.name, cp.enabled !== false);
+          if (cp.models && Array.isArray(cp.models)) {
+            for (const m of cp.models) {
+              if (m.model_id) saveCustomProviderModel(cp.name, m.model_id, m.enabled !== false);
+            }
+          }
+        }
+      }
+    }
+
+    // 3. 导入模型等级
+    if (decrypted.modelTiers && typeof decrypted.modelTiers === 'object') {
+      for (const [key, tier] of Object.entries(decrypted.modelTiers)) {
+        const slashIdx = key.indexOf('/');
+        const provider = slashIdx >= 0 ? key.slice(0, slashIdx) : '';
+        const modelId = slashIdx >= 0 ? key.slice(slashIdx + 1) : key;
+        if (modelId && tier) setModelTier(modelId, provider, tier);
+      }
+    }
+
+    // 4. 导入模型启用状态
+    if (decrypted.modelStates && typeof decrypted.modelStates === 'object') {
+      for (const [key, enabled] of Object.entries(decrypted.modelStates)) {
+        const slashIdx = key.indexOf('/');
+        const provider = slashIdx >= 0 ? key.slice(0, slashIdx) : '';
+        const modelId = slashIdx >= 0 ? key.slice(slashIdx + 1) : key;
+        if (modelId) setModelEnabled(modelId, provider, enabled !== false);
+      }
+    }
+
+    // 5. 导入提供商优先级
+    if (decrypted.providerPriorities && typeof decrypted.providerPriorities === 'object') {
+      for (const [provider, priority] of Object.entries(decrypted.providerPriorities)) {
+        if (typeof priority === 'number') setProviderPriority(provider, priority);
+      }
+    }
+
+    // 6. 导入提供商设置（启用状态、测试模型）
+    if (decrypted.providerSettings && typeof decrypted.providerSettings === 'object') {
+      for (const [provider, settings] of Object.entries(decrypted.providerSettings)) {
+        if (settings && typeof settings === 'object') {
+          setProviderEnabled(provider, settings.enabled !== false);
+          if (settings.testModel) setProviderTestModel(provider, settings.testModel);
+        }
+      }
+    }
+
+    jsonResponse(res, 200, { success: true, message: '配置导入成功' });
+  } catch (err) {
+    console.error('[Admin] Import error:', err.message);
+    jsonResponse(res, 500, { error: '导入失败: ' + err.message });
+  }
+}
+
+/**
  * handleAdminRequest — 管理面板请求路由分发器
  * 使用路由表模式替代 if-else 链，将路径-方法-处理三元组集中定义
  * @param {URL} parsedUrl - 解析后的 URL 对象
@@ -2118,7 +2484,13 @@ async function handleAdminRequest(parsedUrl, req, res) {
         username = form.username || 'admin';
         password = form.password || '';
       }
-      // Rate limit: delay failed attempts to slow brute force
+      // IP-based rate limiting: 15 min window, 10 max
+      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress || 'unknown';
+      if (!_checkLoginRate(ip)) {
+        res.writeHead(429, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: '登录尝试过于频繁，请 15 分钟后再试' }));
+        return true;
+      }
       const user = verifyAdminLogin(username, password);
       if (user) {
         const token = createSession(user.username);
@@ -2126,7 +2498,7 @@ async function handleAdminRequest(parsedUrl, req, res) {
         const redirect = isUsingDefaultPassword(user.username) ? '/admin?change_password=1' : '/admin';
         res.writeHead(302, { 'Location': redirect }); res.end();
       } else {
-        // Add 500ms delay on failed login to prevent brute force
+        _recordLoginAttempt(ip);
         await new Promise(r => setTimeout(r, 500));
         res.writeHead(302, { 'Location': '/admin/login?error=1' }); res.end();
       }
@@ -2211,6 +2583,8 @@ async function handleAdminRequest(parsedUrl, req, res) {
         { method: 'POST',  path: '/swe-bench/sync',     handler: () => handleSweBenchSync(req, res) },
         { method: 'POST',  path: '/swe-bench/test',     handler: () => handleSweBenchTest(req, res) },
         { method: 'GET',   path: '/swe-bench/export',   handler: () => handleSweBenchExport(res) },
+        { method: 'POST',  path: '/export',             handler: () => handleExportConfig(req, res) },
+        { method: 'POST',  path: '/import',             handler: () => handleImportConfig(req, res) },
       ];
 
       // 精确路径匹配

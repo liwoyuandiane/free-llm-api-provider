@@ -11,6 +11,7 @@ const path = require('path');
 const fs = require('fs');
 const { loadConfig, getEnabledProviders, getAllApiKeys, getServerApiKey } = require('./config');
 const { sources, getModelsByProvider, ENV_VAR_NAMES, getModelLimits, isProviderShutdown } = require('./models');
+const { validateSession } = require('./db');
 
 // Token estimation (rough: ~4 chars per token for English, ~2 for CJK)
 function isStreaming(body) {
@@ -135,11 +136,33 @@ function getServerKey() {
 
 function invalidateServerKeyCache() { _cachedServerKey = null; }
 
+// Standard JSON error response helper
+function jsonError(res, status, error, provider) {
+  const body = { error };
+  if (provider) body.provider = provider;
+  res.writeHead(status, { 'Content-Type': 'application/json', ...(provider ? { 'X-Provider': provider } : {}) });
+  res.end(JSON.stringify(body));
+}
+
+// Simple cookie parser
+function parseCookies(req) {
+  const cookieHeader = req.headers.cookie || '';
+  const cookies = {};
+  for (const pair of cookieHeader.split(';')) {
+    const idx = pair.indexOf('=');
+    if (idx === -1) continue;
+    const key = pair.slice(0, idx).trim();
+    const val = pair.slice(idx + 1).trim();
+    if (key) cookies[key] = decodeURIComponent(val);
+  }
+  return cookies;
+}
+
 // Request timeout per provider (ms)
 const PROVIDER_TIMEOUT = 15000;
 
 // Circuit breaker state
-const circuitBreaker = new Map(); // providerKey -> { failures, lastFailure, open }
+const circuitBreaker = new Map(); // providerKey -> { failures, lastFailure, open, openedAt, halfOpen }
 const CIRCUIT_THRESHOLD = 3;
 const CIRCUIT_RESET_MS = 30000;
 /** 速率限制冷却时间 (ms) */
@@ -415,12 +438,13 @@ function getPrioritizedProviders(config, opts = {}) {
 function isCircuitOpen(providerKey) {
   const state = circuitBreaker.get(providerKey);
   if (!state) return false;
-  if (!state.open) return false;
-  // Use openedAt for reset check (not lastFailure) so continuous failures don't prevent reset
+  if (!state.open && !state.halfOpen) return false;
+  // If halfOpen, allow the probe request through
+  if (state.halfOpen) return false;
+  // Check if reset time elapsed — enter halfOpen state (allow probe)
   if (Date.now() - (state.openedAt || state.lastFailure) > CIRCUIT_RESET_MS) {
+    state.halfOpen = true;
     state.open = false;
-    state.failures = 0;
-    state.openedAt = 0;
     return false;
   }
   return true;
@@ -432,11 +456,18 @@ function isCircuitOpen(providerKey) {
 function recordFailure(providerKey) {
   let state = circuitBreaker.get(providerKey);
   if (!state) {
-    state = { failures: 0, lastFailure: 0, open: false, openedAt: 0 };
+    state = { failures: 0, lastFailure: 0, open: false, openedAt: 0, halfOpen: false };
     circuitBreaker.set(providerKey, state);
   }
   state.failures++;
   state.lastFailure = Date.now();
+  // If halfOpen probe failed, re-open immediately
+  if (state.halfOpen) {
+    state.open = true;
+    state.halfOpen = false;
+    state.openedAt = Date.now();
+    return;
+  }
   if (state.failures >= CIRCUIT_THRESHOLD && !state.open) {
     state.open = true;
     state.openedAt = Date.now();
@@ -452,6 +483,7 @@ function recordSuccess(providerKey) {
     state.failures = 0;
     state.open = false;
     state.openedAt = 0;
+    state.halfOpen = false;
   }
 }
 
@@ -834,7 +866,7 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
   
   // Detect vision requests and filter providers
   const visionOnly = hasVisionInput(reqBody);
-  const providers = getPrioritizedProviders(config, { visionOnly });
+  let providers = getPrioritizedProviders(config, { visionOnly });
   
   if (providers.length === 0) {
     throw new Error(visionOnly ? 'No vision-capable providers available' : 'No providers configured');
@@ -1020,13 +1052,31 @@ function createServer() {
     // Chat completions
     if (pathname === '/v1/chat/completions' && req.method === 'POST') {
       // Validate API key (case-insensitive Bearer prefix per HTTP spec)
+      // Also accept admin session cookie for same-origin requests
       const authHeader = req.headers.authorization || '';
       const bearerMatch = authHeader.match(/^bearer\s+(.+)$/i);
       const apiKey = bearerMatch ? bearerMatch[1].trim() : authHeader.trim();
-      
-      if (!timingSafeEqual(apiKey, getServerKey())) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Invalid API key' }));
+
+      let isAuthed = false;
+
+      // 1. Check Bearer token against server key
+      if (apiKey && timingSafeEqual(apiKey, getServerKey())) {
+        isAuthed = true;
+      }
+
+      // 2. Check session cookie (for admin UI playground requests)
+      if (!isAuthed) {
+        try {
+          const cookies = parseCookies(req);
+          if (cookies.flap_session) {
+            const session = validateSession(cookies.flap_session);
+            if (session) isAuthed = true;
+          }
+        } catch {}
+      }
+
+      if (!isAuthed) {
+        jsonError(res, 401, 'Invalid API key or session');
         return;
       }
       
@@ -1041,8 +1091,7 @@ function createServer() {
           bodyDestroyed = true;
           req.pause();
           if (!res.headersSent) {
-            res.writeHead(413, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Request body too large' }));
+            jsonError(res, 413, 'Request body too large');
           }
         }
       });
@@ -1098,18 +1147,18 @@ function createServer() {
               console.log(`[Proxy] Streaming error: ${err.message}`);
               if (!res.writableEnded) {
                 if (!headersSent) {
+                  // No chunks sent yet — send proper 502 error
                   headersSent = true;
-                  res.writeHead(200, {
-                    'Content-Type': 'text/event-stream',
-                    'Cache-Control': 'no-cache',
-                    'Connection': 'keep-alive',
-                  });
+                  const errMsg = err.error || err.message || 'All providers failed';
+                  jsonError(res, 502, errMsg, providerName !== 'unknown' ? providerName : '');
+                } else {
+                  // Partial stream started — send error via SSE (can't change status)
+                  try {
+                    res.write('data: {"error":"' + (err.error || 'All providers failed') + '"}\n\n');
+                    res.write('data: [DONE]\n\n');
+                    res.end();
+                  } catch {}
                 }
-                try {
-                  res.write('data: {"error":"All providers failed"}\n\n');
-                  res.write('data: [DONE]\n\n');
-                  res.end();
-                } catch {}
               }
             }
           } else {
@@ -1131,12 +1180,13 @@ function createServer() {
           }
         } catch (err) {
           const isJsonError = err instanceof SyntaxError && err.message.includes('JSON');
-          res.writeHead(isJsonError ? 400 : 502, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({
-            error: isJsonError ? 'Invalid request body' : 'All providers failed',
-            message: isJsonError ? '请求体 JSON 格式错误' : 'All providers failed. Check your API keys.',
-            suggestion: 'Add more providers or check your API keys',
-          }));
+          if (isJsonError) {
+            jsonError(res, 400, 'Invalid request body');
+          } else if (err.error) {
+            jsonError(res, err.code || 502, err.error, err.provider);
+          } else {
+            jsonError(res, 502, err.message || 'All providers failed');
+          }
         }
       });
       return;
@@ -1204,13 +1254,12 @@ function createServer() {
     
     // 404 — only if response hasn't been sent yet
     if (!res.headersSent) {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Not found' }));
+      jsonError(res, 404, 'Not found');
     }
     } catch (err) {
       console.error('[Proxy] Unhandled error:', err instanceof Error ? err.stack : String(err));
       if (!res.headersSent) {
-        try { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Internal server error' })); } catch(e) {}
+        try { jsonError(res, 500, 'Internal server error'); } catch(e) {}
       }
     }
   });

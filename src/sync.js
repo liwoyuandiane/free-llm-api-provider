@@ -25,24 +25,14 @@ const LITELLM_URL = 'https://raw.githubusercontent.com/BerriAI/litellm/main/mode
 const PROVIDER_MAP = {
   'groq': 'groq',
   'cerebras': 'cerebras',
-  'sambanova': 'sambanova',
   'openrouter': 'openrouter',
-  'replicate': 'replicate',
-  'deepinfra': 'deepinfra',
   'codestral': 'codestral',
-  'hyperbolic': 'hyperbolic',
-  'scaleway': 'scaleway',
   'cloudflare': 'cloudflare',
-  'perplexity': 'perplexity',
-  'zai': 'zai',
+  'zai': 'zai',到GitHub了吗？
+  
   'ovhcloud': 'ovhcloud',
-  'gemini': 'gemini',
   'nvidia_nim': 'nvidia',
-  'fireworks_ai': 'fireworks',
-  'together_ai': 'together',
-  'dashscope': 'qwen',
   'mistral': 'codestral',
-  'minimax': 'minimax',
 };
 
 // Last sync tracking
