@@ -21,11 +21,11 @@ const { startProxyServer, PROXY_PORT } = require('./proxy');
 const { startDashboard } = require('./status-dashboard');
 const { runHealthCheck, getHealthyProviders } = require('./health-checker');
 const { syncCatalog, exportCatalog, getCatalogUrl } = require('./sync');
-const { getMeta } = require('./db');
+const { getMeta, closeDb } = require('./db');
 
 // Global error handlers to prevent crashes, then exit to undefined state
-process.on('uncaughtException', err => { console.error('[FATAL] Uncaught exception:', err instanceof Error ? err.stack : String(err)); process.exit(1); });
-process.on('unhandledRejection', (reason, promise) => { console.error('[FATAL] Unhandled rejection:', reason instanceof Error ? reason.stack : String(reason)); process.exit(1); });
+process.on('uncaughtException', err => { console.error('[FATAL] Uncaught exception:', err instanceof Error ? err.stack : String(err)); try { closeDb(); } catch {} process.exit(1); });
+process.on('unhandledRejection', (reason, promise) => { console.error('[FATAL] Unhandled rejection:', reason instanceof Error ? reason.stack : String(reason)); try { closeDb(); } catch {} process.exit(1); });
 
 // ============================================================================
 // CONSTANTS
@@ -388,12 +388,14 @@ process.on('SIGINT', async () => {
   console.log('\n⚠️ 正在关闭 free-llm-api-provider...');
   if (proxyServer) {
     proxyServer.close(() => {
+      closeDb();
       console.log('✅ 代理已停止');
       process.exit(0);
     });
     // 强制超时：2秒后强制退出
-    setTimeout(() => process.exit(1), 2000);
+    setTimeout(() => { closeDb(); process.exit(1); }, 2000);
   } else {
+    closeDb();
     process.exit(0);
   }
 });
