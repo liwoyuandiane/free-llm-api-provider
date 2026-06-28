@@ -519,6 +519,7 @@ tr:hover td{background:var(--card-hover)}
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="btn btn-p" onclick="sBS()">保存并同步</button>
           <button class="btn btn-sm" onclick="sBT()">测试连接</button>
+          <button class="btn btn-sm" onclick="sBE()">导出当前评分</button>
         </div>
         <p id="sweBenchStatus" style="font-size:12px;color:var(--mut);margin-top:6px"></p>
       </div>
@@ -1162,6 +1163,21 @@ async function sBT(){
 }
 
 /**
+ * sBE — 导出当前 SWE-bench 评分数据为 JSON
+ */
+async function sBE(){
+  const r=await api('/swe-bench/export',{method:'GET'});
+  if(!r.models||r.models.length===0){t('没有可导出的数据','err');return;}
+  const blob=new Blob([JSON.stringify(r,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='swe-bench-'+new Date().toISOString().slice(0,10)+'.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  t('已导出 '+r.models.length+' 个模型评分');
+}
+
+/**
  * lS — 加载已保存的 SWE-bench URL
  */
 const SWE_BENCH_DEFAULT_URL = 'https://raw.githubusercontent.com/liwoyuandiane/free-llm-api-provider/main/swe-bench.json';
@@ -1651,6 +1667,41 @@ async function handleSweBenchSync(req, res) {
     }
   } catch (err) {
     jsonResponse(res, 400, { error: err.message });
+  }
+}
+
+async function handleSweBenchExport(res) {
+  try {
+    const { sources, MODELS } = require('./models');
+    const { getAllSyncedModels } = require('./sync');
+    const models = [];
+
+    // Static models with SWE-bench scores
+    for (const m of MODELS) {
+      const [modelId, name, tier, swe_score, ctx, provider] = m;
+      if (provider && tier) {
+        models.push({ id: provider + '/' + modelId, tier, swe_score: swe_score || '', ctx: ctx || '' });
+      }
+    }
+
+    // Synced models (may have user-adjusted tiers)
+    const synced = getAllSyncedModels();
+    for (const m of synced) {
+      // Overwrite if already exists from static (synced has user edits)
+      const idx = models.findIndex(x => x.id === m.id);
+      const entry = { id: m.id, tier: m.tier, swe_score: m.swe_score || '', ctx: m.ctx || '' };
+      if (idx >= 0) models[idx] = entry;
+      else models.push(entry);
+    }
+
+    jsonResponse(res, 200, {
+      models,
+      updated: new Date().toISOString().split('T')[0],
+      _note: '由 free-llm-api-provider 管理后台导出',
+      _format_url: 'https://raw.githubusercontent.com/liwoyuandiane/free-llm-api-provider/main/swe-bench.json',
+    });
+  } catch (err) {
+    jsonResponse(res, 500, { error: err.message });
   }
 }
 
@@ -2185,6 +2236,7 @@ async function handleAdminRequest(parsedUrl, req, res) {
         { method: 'GET',   path: '/swe-bench/url',      handler: () => handleGetSweBenchUrl(res) },
         { method: 'POST',  path: '/swe-bench/sync',     handler: () => handleSweBenchSync(req, res) },
         { method: 'POST',  path: '/swe-bench/test',     handler: () => handleSweBenchTest(req, res) },
+        { method: 'GET',   path: '/swe-bench/export',   handler: () => handleSweBenchExport(res) },
       ];
 
       // 精确路径匹配
