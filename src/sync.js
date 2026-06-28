@@ -9,14 +9,13 @@
  * Default: litellm's catalog (auto-updates daily).
  */
 
-const { DatabaseSync } = require('node:sqlite');
+const { getMeta, setMeta, getDb } = require('./db');
 const fs = require('fs');
 const path = require('path');
 
 /** 项目根目录下的 .data 文件夹作为默认数据存储路径 */
 const DATA_DIR_DEFAULT = path.resolve(__dirname, '..', '.data');
 const DB_DIR = process.env.DATA_DIR || DATA_DIR_DEFAULT;
-const DB_PATH = path.join(DB_DIR, 'data.db');
 
 // litellm's community-maintained model catalog — updated almost daily
 // Contains 2800+ models across 100+ providers with context windows, vision flags, etc.
@@ -55,37 +54,29 @@ function getCatalogUrl() {
   // Priority: env var > stored in DB > litellm default
   if (process.env.CATALOG_URL) return process.env.CATALOG_URL;
   try {
-    const db = new DatabaseSync(DB_PATH);
-    const row = db.prepare("SELECT value FROM meta WHERE key = ?").get(CATALOG_URL_KEY);
-    db.close();
-    if (row && row.value) return row.value;
+    const stored = getMeta(CATALOG_URL_KEY);
+    if (stored) return stored;
   } catch {}
   return LITELLM_URL; // Default to litellm's catalog!
 }
 
 function setCatalogUrl(url) {
   try {
-    const db = new DatabaseSync(DB_PATH);
-    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(CATALOG_URL_KEY, url || '');
-    db.close();
+    setMeta(CATALOG_URL_KEY, url || '');
     return true;
   } catch { return false; }
 }
 
 function getLastSync() {
   try {
-    const db = new DatabaseSync(DB_PATH);
-    const row = db.prepare("SELECT value FROM meta WHERE key = ?").get(SYNC_META_KEY);
-    db.close();
-    return row ? parseInt(row.value, 10) : 0;
+    const val = getMeta(SYNC_META_KEY);
+    return val ? parseInt(val, 10) : 0;
   } catch { return 0; }
 }
 
 function setLastSync(time) {
   try {
-    const db = new DatabaseSync(DB_PATH);
-    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run(SYNC_META_KEY, String(time || Date.now()));
-    db.close();
+    setMeta(SYNC_META_KEY, String(time || Date.now()));
   } catch {}
 }
 
@@ -133,11 +124,12 @@ function isLitellmFormat(data) {
  *     Into: our sync_models table with provider mapping
  */
 function applyLitellmCatalog(data) {
-  const db = new DatabaseSync(DB_PATH);
+  const db = getDb();
   let count = 0;
   const stats = {};
 
   try {
+    ensureSyncTables(db);
     db.exec('BEGIN');
     // Clear existing synced models for our providers (deduplicate)
     const uniqueProviders = [...new Set(Object.values(PROVIDER_MAP))];
@@ -223,7 +215,6 @@ function applyLitellmCatalog(data) {
     }
 
     db.exec('COMMIT');
-    db.close();
     setLastSync(Date.now());
     
     // Print summary
@@ -236,7 +227,6 @@ function applyLitellmCatalog(data) {
   } catch (err) {
     console.log('[Catalog] Apply litellm catalog failed:', err.message);
     try { db.exec('ROLLBACK'); } catch {}
-    try { db.close(); } catch {}
     return false;
   }
 }
@@ -247,10 +237,11 @@ function applyLitellmCatalog(data) {
 function applyCustomCatalog(catalog) {
   if (!catalog || !catalog.providers) return false;
 
-  const db = new DatabaseSync(DB_PATH);
+  const db = getDb();
   let count = 0;
 
   try {
+    ensureSyncTables(db);
     db.exec('BEGIN');
     for (const [providerKey, providerData] of Object.entries(catalog.providers)) {
       if (!providerData.models || !Array.isArray(providerData.models)) continue;
@@ -277,14 +268,12 @@ function applyCustomCatalog(catalog) {
     }
 
     db.exec('COMMIT');
-    db.close();
     setLastSync(Date.now());
     console.log(`[Catalog] Synced ${count} models from custom catalog`);
     return true;
   } catch (err) {
-    console.log('[Catalog] Apply failed:', err.message);
+    console.log('[Catalog] Apply custom catalog failed:', err.message);
     try { db.exec('ROLLBACK'); } catch {}
-    try { db.close(); } catch {}
     return false;
   }
 }
@@ -292,9 +281,9 @@ function applyCustomCatalog(catalog) {
 /**
  * Ensure tables exist for sync data
  */
-function ensureSyncTables() {
+function ensureSyncTables(db) {
+  if (!db) db = getDb();
   try {
-    const db = new DatabaseSync(DB_PATH);
     db.exec(`
       CREATE TABLE IF NOT EXISTS sync_models (
         provider TEXT NOT NULL,
@@ -314,7 +303,6 @@ function ensureSyncTables() {
         limits_rpd INTEGER DEFAULT 5000
       )
     `);
-    db.close();
   } catch {}
 }
 
@@ -323,9 +311,8 @@ function ensureSyncTables() {
  */
 function getSyncedModels(providerKey) {
   try {
-    const db = new DatabaseSync(DB_PATH);
+    const db = getDb();
     const rows = db.prepare('SELECT model_id, label, tier, swe_score, ctx FROM sync_models WHERE provider = ? ORDER BY rowid').all(providerKey);
-    db.close();
     return rows.map(r => [r.model_id, r.label, r.tier, r.swe_score, r.ctx]);
   } catch { return []; }
 }
@@ -335,9 +322,8 @@ function getSyncedModels(providerKey) {
  */
 function getAllSyncedModels() {
   try {
-    const db = new DatabaseSync(DB_PATH);
+    const db = getDb();
     const rows = db.prepare('SELECT provider, model_id, label, tier, swe_score, ctx FROM sync_models ORDER BY provider, rowid').all();
-    db.close();
     return rows.map(r => ({ provider: r.provider, id: r.model_id, label: r.label, tier: r.tier, swe_score: r.swe_score, ctx: r.ctx }));
   } catch { return []; }
 }
@@ -347,9 +333,8 @@ function getAllSyncedModels() {
  */
 function getSyncedProviderUrl(providerKey) {
   try {
-    const db = new DatabaseSync(DB_PATH);
+    const db = getDb();
     const row = db.prepare('SELECT url, limits_rpm, limits_rpd FROM sync_provider_urls WHERE provider = ?').get(providerKey);
-    db.close();
     return row || null;
   } catch { return null; }
 }

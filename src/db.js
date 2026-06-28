@@ -1396,6 +1396,7 @@ function cleanupOldAnalytics(retentionDays = 90) {
 module.exports = {
   initDatabase,
   closeDb,
+  getDb,
   getServerApiKey,
   ensureServerApiKey,
   regenerateServerApiKey,
