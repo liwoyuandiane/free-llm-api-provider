@@ -212,13 +212,14 @@ function saveConfig(config) {
         merged.apiKeys[provider] = keys.map(k => {
           if (typeof k === 'string' && k.trim()) {
             const encrypted = encryptApiKey(k);
+            if (!encrypted) return k; // 加密失败，保留原值
             try { return JSON.parse(encrypted); } catch { return k; }
           }
           return k; // 已为加密对象 {iv, tag, data}，无需重复加密
         });
       } else if (typeof keys === 'string' && keys.trim()) {
         const encrypted = encryptApiKey(keys);
-        try { merged.apiKeys[provider] = JSON.parse(encrypted); } catch {}
+        if (encrypted) try { merged.apiKeys[provider] = JSON.parse(encrypted); } catch {}
       }
     }
 

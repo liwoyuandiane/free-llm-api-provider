@@ -166,9 +166,9 @@ function getOrCreateEncryptionKey() {
 /**
  * 使用 AES-256-GCM 加密 API Key。
  * 生成随机 16 字节 IV，加密后返回 JSON 字符串。
- * 加密失败时回退到明文并记录警告。
+ * 加密失败时返回 null（不降级到明文）。
  * @param {string} plaintext - 明文 API Key
- * @returns {string} JSON 格式密文或原明文（加密失败时）
+ * @returns {string|null} JSON 格式密文，加密失败返回 null
  */
 function encryptApiKey(plaintext) {
   if (!plaintext) return plaintext;
@@ -181,8 +181,8 @@ function encryptApiKey(plaintext) {
     const tag = cipher.getAuthTag().toString('hex');
     return JSON.stringify({ iv: iv.toString('hex'), tag, data: encrypted });
   } catch (err) {
-    console.warn('[DB] 加密 API Key 失败，回退到明文存储：' + err.message);
-    return plaintext;
+    console.error('[DB] 加密 API Key 失败:', err.message);
+    return null;
   }
 }
 
@@ -650,7 +650,11 @@ function addProviderKey(provider, apiKey, notes) {
     if (existingKeys.some(k => k.key === apiKey)) return true; // already exists
 
     const encrypted = encryptApiKey(apiKey);
-    db.prepare('INSERT OR IGNORE INTO api_keys (provider, api_key, notes) VALUES (?, ?, ?)').run(provider, encrypted, notes || '');
+    if (!encrypted && apiKey) {
+      console.error('[DB] 加密失败，Key 未存储:', provider);
+      return false;
+    }
+    db.prepare('INSERT OR IGNORE INTO api_keys (provider, api_key, notes) VALUES (?, ?, ?)').run(provider, encrypted || apiKey, notes || '');
 
     // 同步更新 JSON config 中的备份（同样是加密后写入）
     try {
@@ -1094,12 +1098,11 @@ function recordRateLimit(provider, apiKey) {
   const b = getRateLimitBucket();
   try {
     const upsert = (bucket) => {
-      const existing = db.prepare('SELECT count FROM rate_limits WHERE provider=? AND api_key=? AND bucket=?').get(provider, apiKey, bucket);
-      if (existing) {
-        db.prepare('UPDATE rate_limits SET count = count + 1 WHERE provider=? AND api_key=? AND bucket=?').run(provider, apiKey, bucket);
-      } else {
-        db.prepare('INSERT INTO rate_limits (provider, api_key, bucket, count) VALUES (?, ?, ?, 1)').run(provider, apiKey, bucket);
-      }
+      // Atomic UPSERT - no SELECT-then-UPDATE race condition
+      db.prepare(
+        'INSERT INTO rate_limits (provider, api_key, bucket, count) VALUES (?, ?, ?, 1) ' +
+        'ON CONFLICT(provider, api_key, bucket) DO UPDATE SET count = count + 1'
+      ).run(provider, apiKey, bucket);
     };
     upsert(b.min);
     upsert(b.day);

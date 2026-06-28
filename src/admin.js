@@ -2093,14 +2093,16 @@ async function handleAdminRequest(parsedUrl, req, res) {
         username = form.username || 'admin';
         password = form.password || '';
       }
+      // Rate limit: delay failed attempts to slow brute force
       const user = verifyAdminLogin(username, password);
       if (user) {
         const token = createSession(user.username);
         setSessionCookie(req, res, token);
-        // 默认密码登录时在 URL 中标记，前端显示提醒弹窗（可关闭）
         const redirect = isUsingDefaultPassword(user.username) ? '/admin?change_password=1' : '/admin';
         res.writeHead(302, { 'Location': redirect }); res.end();
       } else {
+        // Add 500ms delay on failed login to prevent brute force
+        await new Promise(r => setTimeout(r, 500));
         res.writeHead(302, { 'Location': '/admin/login?error=1' }); res.end();
       }
       return true;
