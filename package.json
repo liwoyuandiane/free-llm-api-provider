@@ -23,8 +23,7 @@
   "files": [
     "src/",
     "LICENSE",
-    "README.md",
-    "check-deps.js"
+    "README.md"
   ],
   "bin": {
     "free-llm-api-provider": "src/cli.js",

@@ -53,7 +53,7 @@
 - **Auto-failover**: 429/500/timeout → switch provider automatically
 - **Sticky provider**: Once a provider works, keeps using it until it fails (faster response)
 - **Multi-key support**: Multiple keys per provider, tries all before failing over
-- **238+ models** across 25+ providers (NVIDIA, Groq, OpenRouter, Cerebras, etc.)
+- **238+ static models + 2800+ synced models** across 27+ providers (NVIDIA, Groq, OpenRouter, Cerebras, etc.)
 - **Tier-based routing**: `tier-splus` (elite) → `tier-b` (default), health scores override tiers
 - **Web Admin UI**: Browser-based management at `http://localhost:4002/admin`
 - **Real-time status dashboard**: `flap status` shows live provider health, latency, quota

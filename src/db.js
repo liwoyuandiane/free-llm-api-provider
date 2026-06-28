@@ -953,14 +953,29 @@ function getModelsWithTier(provider) {
 // Custom providers
 // ============================================================================
 function getCustomProviders() {
-  return db.prepare('SELECT * FROM custom_providers ORDER BY name').all();
+  const rows = db.prepare('SELECT * FROM custom_providers ORDER BY name').all();
+  return rows.map(r => {
+    if (r.api_key) {
+      // Try to decrypt; if it's already plaintext (legacy), leave as-is
+      try { r.api_key = decryptApiKey(r.api_key) || r.api_key; } catch { /* keep as-is */ }
+    }
+    return r;
+  });
 }
 
 function getCustomProvider(name) {
-  return db.prepare('SELECT * FROM custom_providers WHERE name = ?').get(name);
+  const row = db.prepare('SELECT * FROM custom_providers WHERE name = ?').get(name);
+  if (row && row.api_key) {
+    try { row.api_key = decryptApiKey(row.api_key) || row.api_key; } catch { /* keep as-is */ }
+  }
+  return row;
 }
 
 function saveCustomProvider(name, baseUrl, apiKey, notes) {
+  if (apiKey) {
+    const encrypted = encryptApiKey(apiKey);
+    if (encrypted) apiKey = encrypted;
+  }
   db.prepare('INSERT OR REPLACE INTO custom_providers (name, base_url, api_key, notes) VALUES (?, ?, ?, ?)').run(name, baseUrl, apiKey || '', notes || '');
 }
 

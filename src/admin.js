@@ -32,7 +32,6 @@ function getAdminInitialData() {
   // Embed API keys (masked for safety — full keys only via /api/admin/config)
   // Include BOTH database keys AND environment variable keys
   const rawKeys = getAllProviderKeys();
-  const allApiKeys = getAllApiKeys(config, '');
   const apiKeys = {};
   // Database keys
   for (const [prov, keys] of Object.entries(rawKeys)) {
@@ -128,9 +127,17 @@ function readJsonBody(req) {
   return new Promise(resolve => {
     let body = '';
     let resolved = false;
+    let bodyTooLarge = false;
     const done = v => { if (!resolved) { resolved = true; resolve(v); } };
-    req.on('data', chunk => { body += chunk; if (body.length > MAX_BODY_SIZE) { req.destroy(); done({}); } });
-    req.on('end', () => { try { done(JSON.parse(body)); } catch { done({}); } });
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > MAX_BODY_SIZE && !bodyTooLarge) {
+        bodyTooLarge = true;
+        req.pause();
+        done({ _tooLarge: true });
+      }
+    });
+    req.on('end', () => { if (!bodyTooLarge) { try { done(JSON.parse(body)); } catch { done({}); } } });
     req.on('error', () => done({}));
     req.on('close', () => done({}));
   });

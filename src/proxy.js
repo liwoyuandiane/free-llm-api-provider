@@ -107,16 +107,19 @@ function timingSafeEqual(a, b) {
   const bufA = Buffer.from(String(a));
   const bufB = Buffer.from(String(b));
   if (bufA.length !== bufB.length) return false;
+  if (bufA.length === 0) return true; // both empty
   return crypto.timingSafeEqual(bufA, bufB);
 }
 
-// Server API key — resolved from env var > SQLite > JSON config > auto-generate
+// Server API key — cached after first resolution
+let _cachedServerKey = null;
 function getServerKey() {
+  if (_cachedServerKey) return _cachedServerKey;
   const envKey = process.env.FLAP_API_KEY;
-  if (envKey && envKey.startsWith('sk-')) return envKey;
+  if (envKey && envKey.startsWith('sk-')) { _cachedServerKey = envKey; return envKey; }
   try {
     const dbKey = dbGetServerApiKey();
-    if (dbKey && dbKey.startsWith('sk-')) return dbKey;
+    if (dbKey && dbKey.startsWith('sk-')) { _cachedServerKey = dbKey; return dbKey; }
   } catch (err) {
     console.warn('[Proxy] getServerKey db error:', err.message);
   }
@@ -129,6 +132,8 @@ function getServerKey() {
   // Last resort: generate a new key
   return 'sk-' + crypto.randomBytes(32).toString('hex');
 }
+
+function invalidateServerKeyCache() { _cachedServerKey = null; }
 
 // Request timeout per provider (ms)
 const PROVIDER_TIMEOUT = 15000;
@@ -898,7 +903,8 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
       console.log(`[Proxy] ${sessionId ? 'Sticky' : 'Active'} provider ${chosenProvider.key} failed, failover...`);
       errors.push({ provider: chosenProvider.key, error: err.error || err.message });
       if (err.status === 429) setCooldown(chosenProvider.key, chosenProvider.apiKey, RATE_LIMIT_COOLDOWN_MS);
-      stats.providerUsage.set(chosenProvider.key, (stats.providerUsage.get(chosenProvider.key) || 0) + 1);
+      // Remove failed provider from failover list so it isn't retried immediately
+      providers = providers.filter(p => !(p.key === chosenProvider.key && p.apiKey === chosenProvider.apiKey));
       if (!sessionId) clearActiveProvider(sessionId);
     }
   }
@@ -942,7 +948,6 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
     } catch (err) {
       errors.push({ provider: provider.key, error: err.error || err.message });
       if (err.status === 429) setCooldown(provider.key, provider.apiKey, RATE_LIMIT_COOLDOWN_MS);
-      stats.providerUsage.set(provider.key, (stats.providerUsage.get(provider.key) || 0) + 1);
     }
   }
   
@@ -1034,7 +1039,7 @@ function createServer() {
         body += chunk;
         if (body.length > MAX_PROXY_BODY) {
           bodyDestroyed = true;
-          req.destroy();
+          req.pause();
           if (!res.headersSent) {
             res.writeHead(413, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Request body too large' }));
@@ -1235,6 +1240,7 @@ module.exports = {
   createServer,
   startProxyServer,
   PROXY_PORT,
+  invalidateServerKeyCache,
 };
 
 // If run directly
