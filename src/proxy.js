@@ -411,9 +411,11 @@ function isCircuitOpen(providerKey) {
   const state = circuitBreaker.get(providerKey);
   if (!state) return false;
   if (!state.open) return false;
-  if (Date.now() - state.lastFailure > CIRCUIT_RESET_MS) {
+  // Use openedAt for reset check (not lastFailure) so continuous failures don't prevent reset
+  if (Date.now() - (state.openedAt || state.lastFailure) > CIRCUIT_RESET_MS) {
     state.open = false;
     state.failures = 0;
+    state.openedAt = 0;
     return false;
   }
   return true;
@@ -425,13 +427,14 @@ function isCircuitOpen(providerKey) {
 function recordFailure(providerKey) {
   let state = circuitBreaker.get(providerKey);
   if (!state) {
-    state = { failures: 0, lastFailure: 0, open: false };
+    state = { failures: 0, lastFailure: 0, open: false, openedAt: 0 };
     circuitBreaker.set(providerKey, state);
   }
   state.failures++;
   state.lastFailure = Date.now();
-  if (state.failures >= CIRCUIT_THRESHOLD) {
+  if (state.failures >= CIRCUIT_THRESHOLD && !state.open) {
     state.open = true;
+    state.openedAt = Date.now();
   }
 }
 
@@ -443,6 +446,7 @@ function recordSuccess(providerKey) {
   if (state) {
     state.failures = 0;
     state.open = false;
+    state.openedAt = 0;
   }
 }
 

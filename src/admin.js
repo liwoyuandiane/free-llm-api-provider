@@ -7,7 +7,7 @@
 const { loadConfig, saveConfig, addApiKey, removeApiKey, getAllApiKeys, getServerApiKey } = require('./config');
 const { sources, MODELS, getModelsByProvider } = require('./models');
 const { runHealthCheck, getHealthyProviders } = require('./health-checker');
-const { verifyAdminLogin, createSession, validateSession, deleteSession, updateSessionUsername, getDiscoveredModels: dbGetDiscoveredModels, saveDiscoveredModels, getAllProviderKeys, addProviderKey, updateProviderKeyNotes, removeProviderKey, removeAllProviderKeys, setProviderEnabled, isProviderEnabled, regenerateServerApiKey, setModelEnabled, getAllModelStates, getCustomProviders, saveCustomProvider, deleteCustomProvider, setCustomProviderEnabled, getCustomProviderModels, saveCustomProviderModel, deleteCustomProviderModel, changeAdminPassword, changeAdminUsername, getAdminUsername, getProviderTestModel, setProviderTestModel, setModelTier, getAllModelTiers, getServerApiKey: dbGetServerApiKey, isUsingDefaultPassword, markPasswordChanged, getAllProviderPriorities, setProviderPriority, deleteProviderPriority } = require('./db');
+const { verifyAdminLogin, createSession, validateSession, deleteSession, updateSessionUsername, getMeta, setMeta, getDiscoveredModels: dbGetDiscoveredModels, saveDiscoveredModels, getAllProviderKeys, addProviderKey, updateProviderKeyNotes, removeProviderKey, removeAllProviderKeys, setProviderEnabled, isProviderEnabled, regenerateServerApiKey, setModelEnabled, getAllModelStates, getCustomProviders, saveCustomProvider, deleteCustomProvider, setCustomProviderEnabled, getCustomProviderModels, saveCustomProviderModel, deleteCustomProviderModel, changeAdminPassword, changeAdminUsername, getAdminUsername, getProviderTestModel, setProviderTestModel, setModelTier, getAllModelTiers, getServerApiKey: dbGetServerApiKey, isUsingDefaultPassword, markPasswordChanged, getAllProviderPriorities, setProviderPriority, deleteProviderPriority } = require('./db');
 
 /**
  * getAdminInitialData — 获取管理面板初始数据
@@ -1607,29 +1607,34 @@ async function handleSweBenchSync(req, res) {
   const { url } = body;
   if (!url) return jsonResponse(res, 400, { error: 'Missing URL' });
   try {
-    // Save URL
     setMeta('swe_bench_url', url);
-
-    // Fetch data
     const resp = await fetch(url, { signal: AbortSignal.timeout(30000) });
     if (!resp.ok) return jsonResponse(res, 400, { error: 'HTTP ' + resp.status });
     const data = await resp.json();
     const models = data.models || [];
     if (!Array.isArray(models)) return jsonResponse(res, 400, { error: 'JSON 格式错误' });
 
-    // Apply scores to sync_models
-    let count = 0;
     const { DatabaseSync } = require('node:sqlite');
     const path = require('path');
     const DB_PATH = path.join(process.env.DATA_DIR || path.resolve(__dirname, '..', '.data'), 'data.db');
     const db = new DatabaseSync(DB_PATH);
     try {
+      // Ensure sync_models table exists
+      db.exec(`CREATE TABLE IF NOT EXISTS sync_models (
+        provider TEXT NOT NULL, model_id TEXT NOT NULL,
+        label TEXT DEFAULT '', tier TEXT DEFAULT 'B',
+        swe_score TEXT DEFAULT '', ctx TEXT DEFAULT '',
+        UNIQUE(provider, model_id)
+      )`);
+      // Ensure index
+      db.exec("CREATE INDEX IF NOT EXISTS idx_sync_models_provider ON sync_models(provider)");
+
+      let count = 0;
       for (const m of models) {
         if (!m.id || !m.tier) continue;
         const parts = m.id.split('/');
         const provider = parts.length > 1 ? parts[0] : '';
         const modelId = parts.length > 1 ? parts.slice(1).join('/') : m.id;
-
         if (provider) {
           db.prepare('UPDATE sync_models SET tier = ?, swe_score = ? WHERE model_id = ? AND provider = ?')
             .run(m.tier, m.swe_score || '', modelId, provider);
@@ -1639,12 +1644,11 @@ async function handleSweBenchSync(req, res) {
         }
         count++;
       }
+      setMeta('swe_bench_last_sync', String(Date.now()));
+      jsonResponse(res, 200, { success: true, count });
     } finally {
-      db.close();
+      if (db) try { db.close(); } catch {}
     }
-
-    setMeta('swe_bench_last_sync', String(Date.now()));
-    jsonResponse(res, 200, { success: true, count });
   } catch (err) {
     jsonResponse(res, 400, { error: err.message });
   }
