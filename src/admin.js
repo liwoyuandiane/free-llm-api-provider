@@ -1675,21 +1675,27 @@ async function handleSweBenchExport(res) {
     const { sources, MODELS } = require('./models');
     const { getAllSyncedModels } = require('./sync');
     const models = [];
+    const userTiers = getAllModelTiers(); // { "provider/model_id": "S+" }
+    const userScores = {}; // { "provider/model_id": "score" } from metadata if available
 
     // Static models with SWE-bench scores
     for (const m of MODELS) {
       const [modelId, name, tier, swe_score, ctx, provider] = m;
       if (provider && tier) {
-        models.push({ id: provider + '/' + modelId, tier, swe_score: swe_score || '', ctx: ctx || '' });
+        const key = provider + '/' + modelId;
+        // Apply user override if exists
+        const finalTier = userTiers[key] || tier;
+        models.push({ id: key, tier: finalTier, swe_score: swe_score || '', ctx: ctx || '' });
       }
     }
 
     // Synced models (may have user-adjusted tiers)
     const synced = getAllSyncedModels();
     for (const m of synced) {
-      // Overwrite if already exists from static (synced has user edits)
-      const idx = models.findIndex(x => x.id === m.id);
-      const entry = { id: m.id, tier: m.tier, swe_score: m.swe_score || '', ctx: m.ctx || '' };
+      const key = m.id;
+      const finalTier = userTiers[key] || m.tier;
+      const entry = { id: key, tier: finalTier, swe_score: m.swe_score || '', ctx: m.ctx || '' };
+      const idx = models.findIndex(x => x.id === key);
       if (idx >= 0) models[idx] = entry;
       else models.push(entry);
     }
@@ -1697,7 +1703,7 @@ async function handleSweBenchExport(res) {
     jsonResponse(res, 200, {
       models,
       updated: new Date().toISOString().split('T')[0],
-      _note: '由 free-llm-api-provider 管理后台导出',
+      _note: '由 free-llm-api-provider 管理后台导出（包含手动调整的等级）',
       _format_url: 'https://raw.githubusercontent.com/liwoyuandiane/free-llm-api-provider/main/swe-bench.json',
     });
   } catch (err) {
