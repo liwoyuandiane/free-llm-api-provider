@@ -21,6 +21,7 @@ const { startProxyServer, PROXY_PORT } = require('./proxy');
 const { startDashboard } = require('./status-dashboard');
 const { runHealthCheck, getHealthyProviders } = require('./health-checker');
 const { syncCatalog, exportCatalog, getCatalogUrl } = require('./sync');
+const { getMeta } = require('./db');
 
 // Global error handlers to prevent crashes, then exit to undefined state
 process.on('uncaughtException', err => { console.error('[FATAL] Uncaught exception:', err instanceof Error ? err.stack : String(err)); process.exit(1); });
@@ -877,6 +878,21 @@ Make sure the proxy is running (flap / free-llm-api-provider).
   if (args.length === 0 || firstArg === 'start') {
     // Auto-sync catalog on startup
     syncCatalog().catch(err => console.warn('[CLI] Catalog sync 失败:', err.message));
+    
+    // Auto-sync SWE-bench scores if URL configured
+    try {
+      const sweUrl = getMeta('swe_bench_url');
+      if (sweUrl) {
+        const { handleSweBenchSync } = require('./admin');
+        const http = require('http');
+        const mockRes = {
+          _status: 0, _data: null,
+          writeHead(s, h) { this._status = s; },
+          end(d) { try { this._data = JSON.parse(d); } catch { this._data = d; } },
+        };
+        handleSweBenchSync({ body: { url: sweUrl } }, mockRes).catch(() => {});
+      }
+    } catch {}
     
     // Periodic auto-sync every 6 hours (respects SYNC_INTERVAL from sync.js = 24h)
     const SYNC_CHECK_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
