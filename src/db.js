@@ -584,6 +584,14 @@ function deleteSession(token) {
   db.prepare('DELETE FROM sessions WHERE id = ?').run(token);
 }
 
+function updateSessionUsername(token, newUsername) {
+  if (!token || !newUsername) return false;
+  try {
+    db.prepare('UPDATE sessions SET username = ? WHERE id = ?').run(newUsername, token);
+    return true;
+  } catch { return false; }
+}
+
 // ============================================================================
 // API Key management
 // ============================================================================
@@ -1404,6 +1412,7 @@ module.exports = {
   createSession,
   validateSession,
   deleteSession,
+  updateSessionUsername,
   saveDiscoveredModels,
   getDiscoveredModels,
   getDiscoveredModelsByProvider,
