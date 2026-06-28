@@ -1404,7 +1404,7 @@ function getLoginHtml(error) {
     <input type="password" id="password" name="password" placeholder="密码" required>
     <button type="submit">登录</button>
   </form>
-  <p class="hint">默认用户名: admin | 密码见启动日志</p>
+  <p class="hint">默认用户名: admin | 默认密码: admin123</p>
 </div>
 </body>
 </html>`;
