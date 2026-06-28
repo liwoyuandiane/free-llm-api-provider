@@ -878,6 +878,12 @@ Make sure the proxy is running (flap / free-llm-api-provider).
     // Auto-sync catalog on startup
     syncCatalog().catch(err => console.warn('[CLI] Catalog sync 失败:', err.message));
     
+    // Periodic auto-sync every 6 hours (respects SYNC_INTERVAL from sync.js = 24h)
+    const SYNC_CHECK_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
+    setInterval(() => {
+      syncCatalog().catch(err => console.warn('[CLI] Periodic sync 失败:', err.message));
+    }, SYNC_CHECK_INTERVAL);
+    
     const config = loadConfig();
     const enabled = getEnabledProviders(config);
     

@@ -172,11 +172,51 @@ function applyLitellmCatalog(data) {
       // Build a human-readable label from the model ID
       const label = modelId.split('/').pop().split(':')[0].replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
+      // Estimate tier based on model name patterns and context window
+      let tier = 'B'; // Default
+      const lowerId = modelId.toLowerCase();
+      const namePart = modelId.split('/').pop()?.toLowerCase() || '';
+      
+      // S+ tier: known frontier models
+      if (/claude.*(?:opus|sonnet|4|3\.5)/.test(lowerId) || 
+          /gpt-4(?:o|\.)?(?!.*mini)/.test(lowerId) ||
+          /gemini.*(?:ultra|2\.0|2\.5)/.test(lowerId) ||
+          /deepseek.*(?:v3|r1)/.test(lowerId) ||
+          /qwen.*(?:3|max|plus|480|235)/.test(lowerId) ||
+          /kimi.*(?:k2|k2\.5)/.test(lowerId) ||
+          /minimax.*(?:m2|m2\.5)/.test(lowerId)) {
+        if (/mini|tiny|small|nano/.test(namePart)) tier = 'A+';
+        else if (/flash|lite|fast/.test(namePart)) tier = 'A';
+        else tier = 'S+';
+      } 
+      // S tier: strong models
+      else if (/claude|gpt-4|gemini|deepseek|qwen|kimi|mistral-large|llama.*(?:70|90|405)/.test(lowerId) ||
+               /nemotron|command.*r|ministral.*large/.test(lowerId)) {
+        tier = 'S';
+      }
+      // A+ tier: capable models
+      else if (/llama|mistral|mixtral|qwen|glm|yandex|phi-3|command/.test(lowerId) ||
+               /gemma.*(?:2|27|4)/.test(lowerId)) {
+        if (/mini|tiny|small|nano/.test(namePart)) tier = 'B+';
+        else tier = 'A';
+      }
+      // B+ tier: good for small tasks
+      else if (/gemma|phi|granite|falcon|dbrx|solar|aya/.test(lowerId)) {
+        tier = 'B+';
+      }
+
+      // Context window bonus: models with large context are likely more capable
+      if (info.max_input_tokens) {
+        const ctx = info.max_input_tokens;
+        if (ctx >= 1000000 && tier === 'B') tier = 'A-';
+        else if (ctx >= 128000 && tier === 'B') tier = 'B+';
+      }
+
       // Store
       try {
         db.prepare(
           'INSERT OR REPLACE INTO sync_models (provider, model_id, label, tier, swe_score, ctx) VALUES (?, ?, ?, ?, ?, ?)'
-        ).run(ourProvider, modelId, label, 'B', '', ctx);
+        ).run(ourProvider, modelId, label, tier, '', ctx);
         count++;
         stats[ourProvider] = (stats[ourProvider] || 0) + 1;
       } catch {}

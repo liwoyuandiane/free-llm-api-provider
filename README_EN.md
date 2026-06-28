@@ -295,7 +295,19 @@ Groq key 3 → 200 ✅  ← Stays here until it fails
 
 ## Model Tiers
 
-Based on SWE-bench scores (coding benchmark):
+Model tiers come from three sources:
+
+| Source | Count | SWE-bench Score | Update Method |
+|--------|-------|-----------------|---------------|
+| **Static models** | 238 | ✅ Yes | With code releases |
+| **Synced models** | 797 | ❌ No (auto-tiered) | Auto-sync every 24h from litellm catalog |
+| **User custom** | Unlimited | ✅ Manual | Admin UI |
+
+**Synced model auto-tiering**: Based on model name patterns (e.g., claude, gpt-4, gemini) and context window size, models are automatically assigned tiers from S+ to C. Admins can manually adjust tiers in the admin UI.
+
+**SWE-bench scores**: Currently only the 238 static models have SWE-bench scores. These come from published SWE-bench papers and community evaluations. Synced models use auto-tiering based on model names and context windows since SWE-bench data is not available from the litellm catalog.
+
+**Tier guide:**
 
 | Tier | Score | Description |
 |------|-------|-------------|
