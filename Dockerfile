@@ -2,8 +2,7 @@ FROM node:22-alpine
 WORKDIR /app
 COPY package.json ./
 COPY src/ src/
-COPY check-deps.js ./
-RUN node check-deps.js && node -e "require('./src/proxy')"
+RUN node -c src/*.js && node -e "require('./src/proxy')"
 ENV DATA_DIR=/app/data
 RUN mkdir -p /app/data
 EXPOSE 4002
