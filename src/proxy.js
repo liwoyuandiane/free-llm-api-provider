@@ -997,6 +997,10 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
   
   // Track fallback attempts for response headers
   let fallbackCount = 0;
+  // Save original model before tier routing modifies it
+  const originalModel = reqBody.model;
+  // Track tried tiers to prevent fallback loops (tier-c → tier-b → tier-c)
+  const triedTiers = new Set();
   // Detect vision requests and filter providers
   const visionOnly = hasVisionInput(reqBody);
   let providers = getPrioritizedProviders(config, { visionOnly });
@@ -1156,7 +1160,22 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
     }
   }
   
-  // All providers failed
+  // All providers failed — try fallback to next tier if this was a tier-* request
+  const requestedTier = originalModel && TIER_ALIAS_MAP[originalModel];
+  if (requestedTier && reqBody.model) {
+    triedTiers.add(reqBody.model); // Mark current tier as tried
+    const fallbacks = TIER_FALLBACK[reqBody.model] || [];
+    for (const fb of fallbacks) {
+      if (!triedTiers.has(fb)) {
+        triedTiers.add(fb);
+        reqBody.model = fb;
+        console.log(`[Proxy] ⬇ Tier fallback: ${originalModel} → ${fb}`);
+        return handleChatCompletions(reqBody, onStreamChunk);
+      }
+    }
+  }
+  
+  // All fallbacks exhausted
   stats.totalRequests++;
   stats.failedRequests++;
   
