@@ -28,9 +28,10 @@ function _recordLoginAttempt(ip) {
 }
 
 const { loadConfig, saveConfig, addApiKey, removeApiKey, getAllApiKeys, getServerApiKey } = require('./config');
-const { sources, MODELS, getModelsByProvider } = require('./models');
+const { sources, MODELS, getModelsByProvider, TIER_ORDER } = require('./models');
 const { runHealthCheck, getHealthyProviders } = require('./health-checker');
-const { verifyAdminLogin, createSession, validateSession, deleteSession, updateSessionUsername, getMeta, setMeta, getDiscoveredModels: dbGetDiscoveredModels, saveDiscoveredModels, getAllProviderKeys, addProviderKey, updateProviderKeyNotes, removeProviderKey, removeAllProviderKeys, setProviderEnabled, isProviderEnabled, regenerateServerApiKey, setModelEnabled, getAllModelStates, getCustomProviders, saveCustomProvider, deleteCustomProvider, setCustomProviderEnabled, getCustomProviderModels, saveCustomProviderModel, deleteCustomProviderModel, changeAdminPassword, changeAdminUsername, getAdminUsername, getProviderTestModel, setProviderTestModel, setModelTier, setModelLocked, getAllModelTiers, getAllModelLocks, getServerApiKey: dbGetServerApiKey, isUsingDefaultPassword, markPasswordChanged, getAllProviderPriorities, setProviderPriority, deleteProviderPriority, getAllProviderSettings, getHealthStateAll, applyTiersToDiscoveredModels } = require('./db');
+const { proxyFetch } = require('./proxy-agent');
+const { verifyAdminLogin, createSession, validateSession, deleteSession, updateSessionUsername, getMeta, setMeta, getDiscoveredModels: dbGetDiscoveredModels, saveDiscoveredModels, getAllProviderKeys, addProviderKey, updateProviderKeyNotes, removeProviderKey, removeAllProviderKeys, setProviderEnabled, isProviderEnabled, regenerateServerApiKey, setModelEnabled, getAllModelStates, getCustomProviders, saveCustomProvider, deleteCustomProvider, setCustomProviderEnabled, getCustomProviderModels, saveCustomProviderModel, deleteCustomProviderModel, changeAdminPassword, changeAdminUsername, getAdminUsername, getProviderTestModel, setProviderTestModel, setModelTier, getModelTier, setModelLocked, getAllModelTiers, getAllModelLocks, getServerApiKey: dbGetServerApiKey, isUsingDefaultPassword, markPasswordChanged, getAllProviderPriorities, setProviderPriority, deleteProviderPriority, getAllProviderSettings, getHealthStateAll, applyTiersToDiscoveredModels } = require('./db');
 
 const _SIGNUP_URLS = {
   nvidia: 'https://build.nvidia.com/settings/api-keys',
@@ -128,10 +129,15 @@ function getAdminInitialData() {
       }));
     }
   }
-  // Embed test models
+  // Embed test models (with fallback to defaults for display)
   const testModels = {};
   for (const [k] of Object.entries(sources)) {
-    try { const tm = getProviderTestModel(k); if (tm) testModels[k] = tm; } catch {}
+    try {
+      const tm = getProviderTestModel(k);
+      testModels[k] = tm || (typeof DEFAULT_TEST_MODELS !== 'undefined' ? DEFAULT_TEST_MODELS[k] || '' : '');
+    } catch {
+      testModels[k] = typeof DEFAULT_TEST_MODELS !== 'undefined' ? DEFAULT_TEST_MODELS[k] || '' : '';
+    }
   }
   const adminUsername = getAdminUsername();
   const isDefaultPassword = isUsingDefaultPassword(adminUsername);
@@ -163,37 +169,48 @@ async function discoverProviderModels(providerKey, apiKey) {
 
   // Build base URL from chat completions endpoint
   const baseUrl = url.replace('/chat/completions', '').replace(/\/$/, '');
-  const modelsUrl = baseUrl + '/models';
 
-  try {
-    const headers = { 'Content-Type': 'application/json' };
-    if (apiKey) headers.Authorization = 'Bearer ' + apiKey;
+  // Try multiple possible models endpoint paths
+  const modelsUrls = [
+    baseUrl + '/models',
+    baseUrl.replace(/\/v1$/, '') + '/models',
+    baseUrl.replace(/\/v1$/, '') + '/api/models',
+    baseUrl.replace(/\/v1$/, '') + '/api/tags',
+  ];
 
-    const resp = await fetch(modelsUrl, { headers, signal: AbortSignal.timeout(10000) });
+  const headers = { 'Content-Type': 'application/json' };
+  if (apiKey) headers.Authorization = 'Bearer ' + apiKey;
 
-    if (!resp.ok) {
-      console.warn('[Admin] Discover ' + providerKey + ': HTTP ' + resp.status);
-      return [];
+  let lastError = '';
+  for (const modelsUrl of modelsUrls) {
+    try {
+      const resp = await proxyFetch(modelsUrl, { headers, signal: AbortSignal.timeout(10000) });
+      if (!resp.ok) {
+        lastError = `HTTP ${resp.status}`;
+        continue;
+      }
+      const data = await resp.json();
+      // Handle multiple response formats
+      const list = Array.isArray(data) ? data : (data.data || data.models || []);
+      const models = list.map(m => ({
+        id: typeof m === 'string' ? m : (m.id || m.model_id || m.name || ''),
+        owned_by: m.owned_by || m.provider || providerKey,
+        object: m.object || 'model',
+        discoveredAt: Date.now(),
+      })).filter(m => m.id);
+
+      if (models.length > 0) {
+        saveDiscoveredModels(providerKey, models);
+        console.log('[Admin] Discover ' + providerKey + ': ' + models.length + ' models');
+      }
+      return models;
+    } catch (err) {
+      lastError = err.message;
     }
-
-    const data = await resp.json();
-    // Handle both { data: [...] } and plain array formats
-    const list = Array.isArray(data) ? data : (data.data || data.models || []);
-    const models = list.map(m => ({
-      id: typeof m === 'string' ? m : (m.id || m.model_id || ''),
-      owned_by: m.owned_by || m.provider || providerKey,
-      object: m.object || 'model',
-      discoveredAt: Date.now(),
-    })).filter(m => m.id);
-
-    if (models.length > 0) {
-      saveDiscoveredModels(providerKey, models);
-    }
-    return models;
-  } catch (err) {
-    console.warn('[Admin] Discover models failed for ' + providerKey + ':', err.message);
-    return [];
   }
+
+  console.warn('[Admin] Discover ' + providerKey + ': ' + lastError + ' — 请检查网络/代理配置');
+  return [];
 }
 
 // ============================================================================
@@ -620,7 +637,7 @@ tr:hover td{background:var(--card-hover)}
       </div>
       <div class="c">
         <div class="ct" style="margin-bottom:4px">SWE-bench 评分同步</div>
-        <p style="font-size:14px;color:var(--dim);margin-bottom:10px">设置一个 JSON URL 来自动同步模型评分数据。<a href="#" style="color:var(--blue)" onclick="alert('JSON 格式：{&quot;models&quot;:[{&quot;id&quot;:&quot;groq/llama-3.3-70b&quot;,&quot;tier&quot;:&quot;A-&quot;,&quot;swe_score&quot;:&quot;39.5%&quot;,&quot;ctx&quot;:&quot;128k&quot;}]}')">查看格式</a></p>
+        <p style="font-size:14px;color:var(--dim);margin-bottom:10px">设置一个 JSON URL 来自动同步模型评分数据。<a href="#" style="color:var(--blue)" onclick="window.open('https://raw.githubusercontent.com/liwoyuandiane/free-llm-api-provider/main/swe-bench.json')">查看格式</a>（或使用项目根目录的 swe-bench.json 模板）</p>
         <div class="fr"><label>JSON URL</label><input type="text" id="sweBenchUrl" placeholder="https://example.com/swe-bench.json" style="flex:1"></div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="btn btn-p" onclick="sBS()">保存并同步</button>
@@ -1221,11 +1238,15 @@ async function pgSend(){
   const messages=[..._pgHistory];
 
   try{
+    const controller=new AbortController();
+    const timeout=setTimeout(()=>controller.abort(),60000); // 60s total timeout
     const resp=await fetch('/v1/chat/completions',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},
-      body:JSON.stringify({model,messages,stream,max_tokens:1024})
+      body:JSON.stringify({model,messages,stream,max_tokens:1024}),
+      signal:controller.signal
     });
+    clearTimeout(timeout);
     const provider=resp.headers.get('X-Provider')||'unknown';
     if(!resp.ok){
       let errDetail='';
@@ -1265,7 +1286,10 @@ async function pgSend(){
         if(c&&c!=='(无响应)')_pgHistory.push({role:'assistant',content:c});
       }
     }
-  }catch(e){msgDiv.innerHTML='<span style="color:var(--red)">请求失败: '+esc(e.message)+'</span>';}
+  }catch(e){
+    const isTimeout=e.name==='AbortError';
+    msgDiv.innerHTML='<span style="color:var(--red)">'+(isTimeout?'请求超时 (60s)':'请求失败')+': '+esc(e.message)+'</span>';
+  }
   chat.scrollTop=chat.scrollHeight;
 }
 
@@ -1482,7 +1506,11 @@ async function pollAutoTierProgress(){
   }else{
     const btn=document.getElementById('autoTierBtn');
     btn.disabled=false;btn.textContent='自动定级';
-    if(r.ok>0)t('定级完成: 成功 '+r.ok+' 个');
+    if(r.ok>0){
+      t('定级完成: 成功 '+r.ok+' 个');
+      // Reload model table to show updated tiers
+      if(document.getElementById('p-models').classList.contains('active')) rM();
+    }
   }
 }
 
@@ -1897,7 +1925,7 @@ async function handleSweBenchTest(req, res) {
   const { url } = body;
   if (!url) return jsonResponse(res, 400, { error: 'Missing URL' });
   try {
-    const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    const resp = await proxyFetch(url, { signal: AbortSignal.timeout(10000) });
     if (!resp.ok) return jsonResponse(res, 400, { error: 'HTTP ' + resp.status });
     const data = await resp.json();
     const models = data.models || [];
@@ -1974,29 +2002,34 @@ function inferTierFromModelName(modelId) {
   const lowerId = modelId.toLowerCase();
   const namePart = modelId.split('/').pop()?.toLowerCase() || '';
   // A+ for frontier small/cheap models
-  if (/gpt-4o-mini|claude.*haiku|gemini.*flash|deepseek.*lite|qwen.*turbo/.test(lowerId)) return 'A+';
+  if (/gpt-4o-mini|gpt-5-nano|claude.*haiku|gemini.*flash|deepseek.*lite|qwen.*turbo|ministral|command-r7b/.test(lowerId)) return 'A+';
   // S+ tier (frontier large)
-  if (/claude.*(?:opus|sonnet|4)/.test(lowerId) ||
-      /gpt-4(?:o|\.)?(?!.*mini)/.test(lowerId) ||
+  if (/claude.*(?:opus|sonnet|4)(?!.*haiku)/.test(lowerId) ||
+      /gpt-4(?:o|\.)?(?!.*mini|.*oss)/.test(lowerId) ||
       /gemini.*(?:ultra|2\.(?:0|5)|pro)/.test(lowerId) ||
-      /deepseek.*(?:v3|r1|v4)/.test(lowerId) ||
-      /qwen.*(?:3|max|plus|480|235)/.test(lowerId) ||
-      /kimi.*(?:k2|k2\.5|k2\.6)/.test(lowerId)) {
+      /deepseek.*(?:v3|r1|v4|v2)/.test(lowerId) ||
+      /qwen.*(?:3(?!.*4b)|max|plus|480|235|coder.*480|coder.*next)/.test(lowerId) ||
+      /kimi.*(?:k2|k2\.5|k2\.6)/.test(lowerId) ||
+      /mistral-large|mixtral-8x22b|llama-4-maverick/.test(lowerId) ||
+      /nemotron.*super/.test(lowerId) ||
+      /gpt-oss-120b/.test(lowerId) ||
+      /seed-oss-36b/.test(lowerId)) {
     if (/mini|tiny|small|nano/.test(namePart)) return 'A+';
     if (/flash|lite|fast/.test(namePart)) return 'A';
     return 'S+';
   }
   // S tier (excellent, not frontier)
-  if (/claude|gpt-4|gemini|deepseek|qwen|kimi|mistral-large|llama.*(?:70|90|405|maverick)/.test(lowerId) ||
-      /nemotron.*super|command.*r\b/.test(lowerId)) return 'S';
+  if (/claude|gpt-4|gemini|deepseek(?!.*lite)|qwen(?!.*4b|.*turbo)|kimi|mistral-large|llama.*(?:70|90|405|maverick|scout)/.test(lowerId) ||
+      /nemotron|command.*r[^7]/.test(lowerId) ||
+      /gpt-oss/.test(lowerId)) return 'S';
   // A tier (solid performers)
-  if (/llama|mistral|mixtral|qwen|glm|phi-3|command|gemma.*(?:2|27)/.test(lowerId)) {
+  if (/llama|mistral|mixtral|qwen|glm|phi-3|command|gemma.*(?:2|27)|cohere|codestral|gpt-oss-20b/.test(lowerId)) {
     if (/mini|tiny|small|nano/.test(namePart)) return 'B+';
     if (/flash|lite|fast/.test(namePart)) return 'A';
     return 'A';
   }
   // B+ tier
-  if (/gemma|phi|granite|falcon|dbrx|solar|aya/.test(lowerId)) return 'B+';
+  if (/gemma|phi|granite|falcon|dbrx|solar|aya|reka|hermes|dolphin|wizard|mythomax/.test(lowerId)) return 'B+';
   return 'B'; // 默认 B
 }
 
@@ -2045,7 +2078,7 @@ async function handleAutoTier(req, res) {
 }
 
 async function runAutoTierBackground(toGrade) {
-  // Process all models using pattern-based name matching (no API calls needed)
+  // Phase 1: Pattern-based name matching (fast, all models)
   for (let i = 0; i < toGrade.length; i++) {
     const m = toGrade[i];
     if (!m || !m.modelId) {
@@ -2054,7 +2087,7 @@ async function runAutoTierBackground(toGrade) {
       continue;
     }
 
-    _autoTierState.current = m.provider + ' → ' + (m.label || m.modelId);
+    _autoTierState.current = '定级: ' + m.provider + ' → ' + (m.label || m.modelId);
 
     try {
       const tier = inferTierFromModelName(m.modelId);
@@ -2070,6 +2103,62 @@ async function runAutoTierBackground(toGrade) {
     if (i % 10 === 9) await new Promise(r => setImmediate(r));
   }
 
+  // Phase 2: Actual API testing per provider (verifies reachable models)
+  // Group by provider so we can reuse API keys
+  const config = loadConfig();
+  const byProvider = new Map();
+  for (const m of toGrade) {
+    if (!m || !m.modelId || !m.provider) continue;
+    if (!byProvider.has(m.provider)) byProvider.set(m.provider, []);
+    byProvider.get(m.provider).push(m);
+  }
+
+  _autoTierState.current = '测试模型可用性...';
+
+  // Process each provider's models in parallel batches (max 3 per provider)
+  const providerPromises = [];
+  for (const [providerKey, models] of byProvider) {
+    const src = sources[providerKey];
+    if (!src || !src.url) continue;
+    const keys = getAllApiKeys(config, providerKey);
+    if (keys.length === 0 && !src.noKeyRequired) continue;
+    const apiKey = keys[0] || '';
+
+    providerPromises.push((async () => {
+      // Skip Anthropic format providers (different API format)
+      if (src.anthropicFormat) return;
+      const batchSize = 3;
+      for (let i = 0; i < models.length; i += batchSize) {
+        const batch = models.slice(i, i + batchSize);
+        await Promise.all(batch.map(async (m) => {
+          try {
+            const resp = await proxyFetch(src.url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': apiKey ? 'Bearer ' + apiKey : undefined },
+              body: JSON.stringify({ model: m.modelId, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
+              signal: AbortSignal.timeout(8000),
+            });
+            // Got a response — model exists and is reachable
+            if (resp.ok || resp.status === 429 || resp.status === 401 || resp.status === 403) {
+              const patternTier = inferTierFromModelName(m.modelId);
+              const patternRank = TIER_ORDER.indexOf(patternTier);
+              const cRank = TIER_ORDER.indexOf('C');
+              // Keep pattern tier if it's better than or equal to C; otherwise set C
+              if (patternRank >= 0 && patternRank <= cRank) {
+                setModelTier(m.modelId, m.provider, patternTier);
+              } else {
+                setModelTier(m.modelId, m.provider, 'C');
+              }
+              _autoTierState.ok++;
+            }
+          } catch { /* Model unreachable — keep pattern tier */ }
+        }));
+        await new Promise(r => setTimeout(r, 200));
+      }
+    })());
+  }
+
+  await Promise.all(providerPromises);
   _autoTierState.running = false;
   _autoTierState.current = '定级完成';
 }
@@ -2123,7 +2212,12 @@ async function handleGetConfig(res) {
   // Get test model configs
   let testModels = {};
   for (const [k] of Object.entries(sources)) {
-    try { const tm = getProviderTestModel(k); if (tm) testModels[k] = tm; } catch {}
+    try {
+      const tm = getProviderTestModel(k);
+      testModels[k] = tm || DEFAULT_TEST_MODELS[k] || '';
+    } catch {
+      testModels[k] = DEFAULT_TEST_MODELS[k] || '';
+    }
   }
 
   // Get provider priorities
@@ -2262,6 +2356,12 @@ const DEFAULT_TEST_MODELS = {
   zai: 'zai/glm-4.5-flash',
   openrouter: 'meta-llama/llama-3.1-8b-instruct:free',
   siliconflow: 'Qwen/Qwen2.5-Coder-32B-Instruct',
+  aihorde: 'MythoMax-L2-13b',
+  cloudflare: '@cf/meta/llama-3.1-8b-instruct',
+  ovhcloud: 'Meta-Llama-3_3-70B-Instruct',
+  huggingface: 'deepseek-ai/DeepSeek-V3-0324',
+  pollinations: 'openai',
+  llm7: 'gpt-4o-mini',
 };
 
 async function runKeyTest(res, url, provider, apiKey) {
@@ -2276,7 +2376,7 @@ async function runKeyTest(res, url, provider, apiKey) {
   }
   const t0 = performance.now();
   try {
-    const resp = await fetch(url, {
+    const resp = await proxyFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
       body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
@@ -2342,7 +2442,7 @@ async function handleTestProvider(req, res, providerKey) {
   const t0 = performance.now();
 
   try {
-    const resp = await fetch(url, {
+    const resp = await proxyFetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -2359,7 +2459,11 @@ async function handleTestProvider(req, res, providerKey) {
     if (resp.ok || resp.status === 429) {
       return jsonResponse(res, 200, { success: true, latency: ms, status: resp.status });
     }
-    return jsonResponse(res, 200, { success: false, error: `HTTP ${resp.status}`, latency: ms });
+    // Try to get response body for better error diagnosis
+    let errBody = '';
+    try { errBody = await resp.text(); } catch {}
+    const errMsg = errBody ? (errBody.length > 200 ? errBody.substring(0, 200) + '...' : errBody) : `HTTP ${resp.status}`;
+    return jsonResponse(res, 200, { success: false, error: errMsg, latency: ms });
   } catch (err) {
     runHealthCheck(config).catch(() => {});
     return jsonResponse(res, 200, { success: false, error: err.message, latency: Math.round(performance.now() - t0) });

@@ -29,6 +29,8 @@ const groq = [
   ['llama-3.1-8b-instant', 'Llama 3.1 8B', '128k'],
   ['openai/gpt-oss-120b', 'GPT OSS 120B', '128k'],
   ['openai/gpt-oss-20b', 'GPT OSS 20B', '128k'],
+  ['openai/gpt-oss-safeguard-20b', 'GPT OSS Safeguard 20B', '128k'],
+  ['meta-llama/llama-prompt-guard-2-86m', 'Llama Prompt Guard 2', '8k'],
   ['qwen/qwen3-32b', 'Qwen3 32B', '131k'],
   ['groq/compound', 'Groq Compound', '131k'],
   ['groq/compound-mini', 'Groq Compound Mini', '131k'],
@@ -216,7 +218,12 @@ const agnesAi = [];
 const routeway = [];
 const bazaarlink = [];
 const ainativeStudio = [];
-const aihorde = [];
+const aihorde = [
+  ['MythoMax-L2-13b', 'MythoMax 13B', '8k'],
+  ['mixtral-8x7b-instruct', 'Mixtral 8x7B', '32k'],
+  ['llama-3-70b-instruct', 'Llama 3 70B', '8k'],
+  ['wizard-vicuna-13b', 'Wizard Vicuna 13B', '4k'],
+];
 
 // Anthropic / Claude
 const anthropicModels = [

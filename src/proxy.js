@@ -12,6 +12,7 @@ const fs = require('fs');
 const { loadConfig, getEnabledProviders, getAllApiKeys, getServerApiKey } = require('./config');
 const { sources, getModelsByProvider, ENV_VAR_NAMES, getModelLimits, isProviderShutdown } = require('./models');
 const { validateSession } = require('./db');
+const { proxyFetch } = require('./proxy-agent');
 
 const TIER_ALIAS_MAP = { 'tier-splus': 'S+', 'tier-s': 'S', 'tier-aplus': 'A+', 'tier-a': 'A', 'tier-aminus': 'A-', 'tier-bplus': 'B+', 'tier-b': 'B', 'tier-c': 'C' };
 
@@ -173,7 +174,7 @@ function parseCookies(req) {
 }
 
 // Request timeout per provider (ms)
-const PROVIDER_TIMEOUT = 15000;
+const PROVIDER_TIMEOUT = 10000;
 
 // Circuit breaker state
 const circuitBreaker = new Map(); // providerKey -> { failures, lastFailure, open, openedAt, halfOpen }
@@ -407,7 +408,19 @@ function getPrioritizedProviders(config, opts = {}) {
         healthScore,
         healthLatency,
         models: models.map(m => m[0]),
-        modelTiers: Object.fromEntries(models.map(m => [m[0], m[2] || 'B'])),
+        modelTiers: (() => {
+          try {
+            const dbTiers = getAllModelTiers();
+            const prefix = key + '/';
+            const merged = {};
+            for (const m of models) {
+              merged[m[0]] = dbTiers[prefix + m[0]] || m[2] || 'B';
+            }
+            return merged;
+          } catch {
+            return Object.fromEntries(models.map(m => [m[0], m[2] || 'B']));
+          }
+        })(),
         anthropicFormat: !!provider?.anthropicFormat,
       });
     }
@@ -740,7 +753,7 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
       headers['Authorization'] = `Bearer ${provider.apiKey}`;
     }
 
-    const response = await fetch(targetUrl, {
+    const response = await proxyFetch(targetUrl, {
       method: 'POST',
       headers,
       body: requestBodyStr,
