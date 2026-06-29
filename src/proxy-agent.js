@@ -149,76 +149,67 @@ async function tunneledFetch(urlStr, init = {}) {
 
     const onData = (chunk) => {
       raw += chunk.toString();
+      if (parsed) return;
+      const idx = raw.indexOf('\r\n\r\n');
+      if (idx === -1) return;
 
-      if (!parsed) {
-        const idx = raw.indexOf('\r\n\r\n');
-        if (idx === -1) return;
+      parsed = true;
+      tlsSock.removeListener('data', onData); // Remove ourselves first
 
-        parsed = true;
-        const [statusLine, ...headerLines] = raw.substring(0, idx).split('\r\n');
-        const sp = statusLine.split(' ');
-        statusCode = parseInt(sp[1]);
-        statusText = sp.slice(2).join(' ') || '';
-        for (const line of headerLines) {
-          const c = line.indexOf(':');
-          if (c > 0) respHeaders[line.substring(0, c).toLowerCase()] = line.substring(c + 2);
-        }
-        bodyStart = idx + 4;
-        contentLength = parseInt(respHeaders['content-length'] || '-1');
-        isStreaming = (respHeaders['content-type'] || '').includes('text/event-stream');
+      const [statusLine, ...headerLines] = raw.substring(0, idx).split('\r\n');
+      const sp = statusLine.split(' ');
+      statusCode = parseInt(sp[1]);
+      statusText = sp.slice(2).join(' ') || '';
+      for (const line of headerLines) {
+        const c = line.indexOf(':');
+        if (c > 0) respHeaders[line.substring(0, c).toLowerCase()] = line.substring(c + 2);
+      }
+      bodyStart = idx + 4;
+      contentLength = parseInt(respHeaders['content-length'] || '-1');
+      isStreaming = (respHeaders['content-type'] || '').includes('text/event-stream');
 
-        raw = raw.substring(bodyStart);
-        bodyStart = 0;
+      const remainder = raw.substring(bodyStart);
+      raw = ''; // Don't reuse raw after this point
 
-        // Create a ReadableStream from the remaining TLS socket data
-        let controllerRef = null;
-        const webBody = new ReadableStream({
-          start(controller) {
-            controllerRef = controller;
-            // Push any data already in buffer
-            if (raw.length > 0) {
-              controller.enqueue(Buffer.from(raw));
-              raw = '';
-            }
-          },
-          cancel() {
-            tlsSock.removeAllListeners('data');
-            tlsSock.destroy();
-          },
-        });
+      // Create a ReadableStream
+      let controllerRef = null;
+      const webBody = new ReadableStream({
+        start(controller) {
+          controllerRef = controller;
+          if (remainder.length > 0) {
+            try { controller.enqueue(Buffer.from(remainder)); } catch (e) {}
+          }
+        },
+        cancel() {
+          tlsSock.removeAllListeners('data');
+          tlsSock.destroy();
+        },
+      });
 
+      if (isStreaming || contentLength < 0) {
         // Stream mode: pipe data as it arrives
-        if (isStreaming || contentLength < 0) {
-          tlsSock.on('data', (newChunk) => {
-            if (controllerRef) {
-              try { controllerRef.enqueue(newChunk); } catch (e) { /* ignore if closed */ }
-            }
-          });
-          tlsSock.on('end', () => {
-            if (controllerRef) try { controllerRef.close(); } catch (e) {}
-          });
-          tlsSock.on('error', (err) => {
-            if (controllerRef) try { controllerRef.error(err); } catch (e) {}
-          });
-          resolve(new Response(webBody, {
-            status: statusCode,
-            statusText,
-            headers: respHeaders,
-          }));
-        } else {
-          // Non-streaming: buffer and resolve
-          tlsSock.on('data', (newChunk) => { raw += newChunk.toString(); });
-          tlsSock.on('end', () => {
-            if (controllerRef) {
-              try { controllerRef.enqueue(Buffer.from(raw)); controllerRef.close(); } catch (e) {}
-            }
-          });
-          resolve(new Response(webBody, {
-            status: statusCode,
-            statusText,
-            headers: respHeaders,
-          }));
-        }
+        tlsSock.on('data', (newChunk) => {
+          if (controllerRef) {
+            try { controllerRef.enqueue(newChunk); } catch (e) { /* ignore if closed */ }
+          }
+        });
+        tlsSock.on('end', () => {
+          if (controllerRef) try { controllerRef.close(); } catch (e) {}
+        });
+        tlsSock.on('error', (err) => {
+          if (controllerRef) try { controllerRef.error(err); } catch (e) {}
+        });
+        resolve(new Response(webBody, { status: statusCode, statusText, headers: respHeaders }));
+      } else {
+        // Non-streaming: buffer entire body then resolve
+        let bodyBuf = remainder; // Start with already-received data
+        tlsSock.on('data', (newChunk) => { bodyBuf += newChunk.toString(); });
+        tlsSock.on('end', () => {
+          if (controllerRef) {
+            try { controllerRef.enqueue(Buffer.from(bodyBuf)); controllerRef.close(); } catch (e) {}
+          }
+        });
+        resolve(new Response(webBody, { status: statusCode, statusText, headers: respHeaders }));
       }
     };
 
