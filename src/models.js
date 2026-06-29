@@ -255,7 +255,7 @@ const sources = {
   llm7: { name: 'LLM7', url: 'https://api.llm7.io/v1/chat/completions', models: llm7Models, noKeyRequired: true },
   'opencode-zen': { name: 'OpenCode Zen', url: 'https://opencode.ai/zen/v1/chat/completions', models: opencodeZen },
   'ollama-cloud': { name: 'Ollama Cloud', url: 'https://api.ollama.com/v1/chat/completions', models: ollamaCloud },
-  'kilo-gateway': { name: 'Kilo Gateway', url: 'https://api.kilo.ai/v1/chat/completions', models: kiloGateway, noKeyRequired: true },
+  'kilo-gateway': { name: 'Kilo Gateway', url: 'https://api.kilo.ai/v1/chat/completions', models: kiloGateway, noKeyRequired: true, noSystemRole: true },
   'agnes-ai': { name: 'Agnes AI', url: 'https://api.agnes-ai.com/v1/chat/completions', models: agnesAi },
   'routeway': { name: 'Routeway', url: 'https://api.routeway.ai/v1/chat/completions', models: routeway },
   'bazaarlink': { name: 'BazaarLink', url: 'https://api.bazaarlink.ai/v1/chat/completions', models: bazaarlink },

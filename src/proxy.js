@@ -729,6 +729,25 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
     let requestBodyStr = bodyStr;
     let isAnthropic = provider.anthropicFormat;
 
+    // System prompt compatibility shim
+    // Convert system role to first user message for providers that don't support it
+    if (provider.noSystemRole) {
+      const parsed = JSON.parse(bodyStr);
+      if (parsed.messages && Array.isArray(parsed.messages)) {
+        // Check all messages for system role (not just first)
+        const hasSystem = parsed.messages.some(m => m.role === 'system');
+        if (hasSystem) {
+          const systemContents = parsed.messages.filter(m => m.role === 'system').map(m => m.content).join('\n');
+          parsed.messages = parsed.messages.filter(m => m.role !== 'system');
+          if (systemContents && parsed.messages.length > 0) {
+            // Insert as first user message with a marker
+            parsed.messages.unshift({ role: 'user', content: '[System Instruction]\n' + systemContents + '\n[/System Instruction]\n\n' + parsed.messages[0].content });
+          }
+          requestBodyStr = JSON.stringify(parsed);
+        }
+      }
+    }
+
     if (isAnthropic) {
       // Anthropic uses x-api-key header instead of Bearer
       headers['x-api-key'] = provider.apiKey;
@@ -808,7 +827,17 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
               if (parsed.choices && parsed.choices[0] && parsed.choices[0].delta) {
                 const delta = parsed.choices[0].delta;
                 const content = delta.content || '';
-                
+                const toolCalls = delta.tool_calls;
+
+                // If this is a tool_calls response, pass it through directly
+                if (toolCalls) {
+                  // Rewrite model name in tool_calls if needed
+                  const newDelta = { ...delta };
+                  parsed.choices[0].delta = newDelta;
+                  onChunk('data: ' + JSON.stringify(parsed) + '\n\n', false, provider.key);
+                  continue;
+                }
+
                 // Extract thinking blocks from content
                 const parts = extractor.processChunk(content);
                 
@@ -959,6 +988,8 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
   const isStream = isStreaming(reqBody);
   const config = loadConfig();
   
+  // Track fallback attempts for response headers
+  let fallbackCount = 0;
   // Detect vision requests and filter providers
   const visionOnly = hasVisionInput(reqBody);
   let providers = getPrioritizedProviders(config, { visionOnly });
@@ -1044,13 +1075,14 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
         const responseObj = JSON.parse(result.body);
         if (responseObj.model) responseObj.model = `${chosenProvider.key}/${responseObj.model}`;
         const limits = getModelLimits(responseObj.model?.replace(chosenProvider.key + '/', '') || chosenProvider.models[0]);
-        return { status: result.status, body: JSON.stringify(responseObj), provider: chosenProvider.key, limits };
+        return { status: result.status, body: JSON.stringify(responseObj), provider: chosenProvider.key, limits, fallbackCount };
       } catch {
-        return { ...result, limits: getModelLimits(chosenProvider.models[0]) };
+        return { ...result, limits: getModelLimits(chosenProvider.models[0]), fallbackCount };
       }
     } catch (err) {
       console.log(`[Proxy] ${sessionId ? 'Sticky' : 'Active'} provider ${chosenProvider.key} failed, failover...`);
       errors.push({ provider: chosenProvider.key, error: err.error || err.message });
+      fallbackCount++;
       if (err.status === 429) setCooldown(chosenProvider.key, chosenProvider.apiKey, RATE_LIMIT_COOLDOWN_MS);
       // Remove failed provider from failover list so it isn't retried immediately
       providers = providers.filter(p => !(p.key === chosenProvider.key && p.apiKey === chosenProvider.apiKey));
@@ -1090,12 +1122,13 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
         const responseObj = JSON.parse(result.body);
         if (responseObj.model) responseObj.model = `${provider.key}/${responseObj.model}`;
         const limits = getModelLimits(responseObj.model?.replace(provider.key + '/', '') || provider.models[0]);
-        return { status: result.status, body: JSON.stringify(responseObj), provider: provider.key, limits };
+        return { status: result.status, body: JSON.stringify(responseObj), provider: provider.key, limits, fallbackCount };
       } catch {
-        return { ...result, limits: getModelLimits(provider.models[0]) };
+        return { ...result, limits: getModelLimits(provider.models[0]), fallbackCount };
       }
     } catch (err) {
       errors.push({ provider: provider.key, error: err.error || err.message });
+      fallbackCount++;
       if (err.status === 429) setCooldown(provider.key, provider.apiKey, RATE_LIMIT_COOLDOWN_MS);
     }
   }
@@ -1286,6 +1319,7 @@ function createServer() {
               'Content-Type': 'application/json',
               'X-Provider': result.provider,
             };
+            if (result.fallbackCount > 0) headers['X-Fallback-Attempts'] = String(result.fallbackCount);
             
             if (result.limits) {
               headers['X-Model-Limit-Context'] = String(result.limits.context);
