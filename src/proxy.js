@@ -1295,7 +1295,126 @@ function createServer() {
       });
       return;
     }
-    
+
+    // ============================================================
+    // Anthropic-compatible /v1/messages endpoint
+    // ============================================================
+    if (pathname === '/v1/messages' && req.method === 'POST') {
+      const authHeader = req.headers.authorization || '';
+      const bearerMatch = authHeader.match(/^bearer\s+(.+)$/i);
+      const apiKey = bearerMatch ? bearerMatch[1].trim() : authHeader.trim();
+
+      let isAuthed = false;
+      if (apiKey && timingSafeEqual(apiKey, getServerKey())) { isAuthed = true; }
+      if (!isAuthed) {
+        // Also accept x-api-key (Anthropic native auth)
+        const xApiKey = req.headers['x-api-key'];
+        if (xApiKey && timingSafeEqual(xApiKey, getServerKey())) { isAuthed = true; }
+      }
+      if (!isAuthed) {
+        try {
+          const cookies = parseCookies(req);
+          if (cookies.flap_session && validateSession(cookies.flap_session)) isAuthed = true;
+        } catch {}
+      }
+      if (!isAuthed) { jsonError(res, 401, 'Invalid API key'); return; }
+
+      let body = '';
+      let bodyDestroyed = false;
+      req.on('data', chunk => {
+        if (bodyDestroyed) return;
+        body += chunk;
+        if (body.length > 1024 * 1024) { bodyDestroyed = true; req.pause(); if (!res.headersSent) jsonError(res, 413, 'Request body too large'); }
+      });
+      req.on('end', async () => {
+        if (bodyDestroyed) return;
+        try {
+          const anthroBody = JSON.parse(body);
+          // Convert Anthropic request → OpenAI internal format
+          const openaiBody = {
+            model: anthroBody.model || 'tier-b',
+            messages: [],
+            max_tokens: anthroBody.max_tokens || 4096,
+            stream: !!anthroBody.stream,
+          };
+          if (anthroBody.system) openaiBody.messages.push({ role: 'system', content: anthroBody.system });
+          if (Array.isArray(anthroBody.messages)) {
+            for (const m of anthroBody.messages) {
+              let content = '';
+              if (typeof m.content === 'string') content = m.content;
+              else if (Array.isArray(m.content)) content = m.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
+              openaiBody.messages.push({ role: m.role || 'user', content });
+            }
+          }
+          if (!openaiBody.messages.length) { jsonError(res, 400, 'Missing messages'); return; }
+
+          const isStream = openaiBody.stream;
+          if (isStream) {
+            let providerName = 'unknown', headersSent = false, started = false;
+            const onChunk = (chunk, done, prov) => {
+              if (prov) providerName = prov;
+              if (!headersSent) {
+                headersSent = true;
+                res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Provider': providerName });
+              }
+              if (done) {
+                if (started) res.write('event: message_stop\ndata: {"type":"message_stop"}\n\n');
+                res.end();
+              } else if (chunk) {
+                try {
+                  const line = chunk.replace(/^data: /, '').trim();
+                  if (line === '[DONE]' || !line) return;
+                  const parsed = JSON.parse(line);
+                  const delta = parsed.choices?.[0]?.delta?.content || '';
+                  if (delta && !started) {
+                    started = true;
+                    res.write('event: message_start\ndata: ' + JSON.stringify({ type: 'message_start', message: { id: 'msg_' + Date.now().toString(36), type: 'message', role: 'assistant', content: [], model: 'flap/' + providerName, stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } } }) + '\n\n');
+                  }
+                  if (delta) res.write('event: content_block_delta\ndata: ' + JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: delta } }) + '\n\n');
+                } catch {}
+              }
+            };
+            try {
+              await handleChatCompletions(openaiBody, onChunk);
+              if (!headersSent) {
+                headersSent = true;
+                res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+                res.write('event: message_start\ndata: ' + JSON.stringify({ type: 'message_start', message: { id: 'msg_' + Date.now().toString(36), type: 'message', role: 'assistant', content: [], model: 'flap/' + providerName, stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } } }) + '\n\n');
+                res.write('event: message_stop\ndata: {"type":"message_stop"}\n\n');
+                res.end();
+              }
+            } catch (err) {
+              if (!res.writableEnded) {
+                const e = err.error || err.message || 'All providers failed';
+                if (!headersSent) { headersSent = true; jsonError(res, 502, e); }
+                else { try { res.write('event: error\ndata: {"error":"' + e + '"}\n\n'); res.end(); } catch {} }
+              }
+            }
+          } else {
+            const result = await handleChatCompletions(openaiBody);
+            const resp = JSON.parse(result.body);
+            const content = resp.choices?.[0]?.message?.content || '';
+            const modelName = resp.model || 'flap/' + result.provider;
+            const fr = resp.choices?.[0]?.finish_reason || 'stop';
+            const anthroResp = {
+              id: 'msg_' + Date.now().toString(36), type: 'message', role: 'assistant',
+              content: [{ type: 'text', text: content }], model: modelName,
+              stop_reason: fr === 'stop' ? 'end_turn' : (fr || 'end_turn'), stop_sequence: null,
+              usage: { input_tokens: resp.usage?.prompt_tokens || 0, output_tokens: resp.usage?.completion_tokens || 0 },
+            };
+            res.writeHead(200, { 'Content-Type': 'application/json', 'X-Provider': result.provider });
+            res.end(JSON.stringify(anthroResp));
+          }
+        } catch (err) {
+          const isJson = err instanceof SyntaxError && err.message.includes('JSON');
+          if (isJson) jsonError(res, 400, 'Invalid request body');
+          else if (err.error) jsonError(res, 502, err.error, err.provider);
+          else jsonError(res, 502, err.message || 'All providers failed');
+        }
+      });
+      return;
+    }
+
     // Models list — tier aliases + synced models + discovered models
     if (pathname === '/v1/models' && req.method === 'GET') {
       const { getAllDiscoveredModels } = require('./admin');
