@@ -613,6 +613,18 @@ tr:hover td{background:var(--card-hover)}
         <p id="sweBenchStatus" style="font-size:12px;color:var(--mut);margin-top:6px"></p>
       </div>
       <div class="c">
+        <div class="ct" style="margin-bottom:4px">自动模型定级</div>
+        <p style="font-size:14px;color:var(--dim);margin-bottom:10px">逐模型测试可用性并按名称匹配自动分配等级。同一提供商串行（每5s一个），多提供商并行。测试不可用的模型保持未定级。</p>
+        <button class="btn btn-p" onclick="startAutoTier()" id="autoTierBtn">开始自动定级</button>
+        <div id="autoTierProgress" style="display:none;margin-top:10px">
+          <div style="font-size:13px;color:var(--dim);margin-bottom:6px" id="autoTierStatus">初始化...</div>
+          <div style="height:6px;background:var(--b2);border-radius:3px;overflow:hidden;margin-bottom:6px">
+            <div id="autoTierBar" style="height:100%;width:0%;background:var(--blue);border-radius:3px;transition:width 0.3s ease"></div>
+          </div>
+          <div style="font-size:12px;color:var(--mut)" id="autoTierCounts">准备中...</div>
+        </div>
+      </div>
+      <div class="c">
         <div class="ct" style="margin-bottom:4px">配置导出与导入</div>
         <p style="font-size:14px;color:var(--dim);margin-bottom:10px">导出所有提供商配置、API Key、模型等级等数据，用密码加密保存为 JSON 文件，可在新实例中导入恢复。</p>
         <div class="fr"><label>导出密码</label><input type="password" id="exportPw" placeholder="加密密码（至少4位）" style="flex:1"></div>
@@ -1380,6 +1392,39 @@ async function lS(){
   document.getElementById('sweBenchStatus').textContent = r.lastSyncStr ? '上次同步: '+r.lastSyncStr : '已配置默认 URL，启动时自动同步';
 }
 
+// ── 自动模型定级 ──
+
+let _autoTierPollTimer = null;
+
+async function startAutoTier(){
+  const btn=document.getElementById('autoTierBtn');
+  const prog=document.getElementById('autoTierProgress');
+  btn.disabled=true;btn.textContent='定级中...';
+  prog.style.display='';
+  document.getElementById('autoTierStatus').textContent='启动中...';
+  document.getElementById('autoTierBar').style.width='0%';
+  document.getElementById('autoTierCounts').textContent='准备中';
+  const r=await api('/auto-tier',{method:'POST'});
+  if(r.error){t(r.error,'err');btn.disabled=false;btn.textContent='开始自动定级';return;}
+  pollAutoTierProgress();
+}
+
+async function pollAutoTierProgress(){
+  const r=await api('/auto-tier/status');
+  const total=r.total||1;
+  const pct=Math.round((r.completed/total)*100);
+  document.getElementById('autoTierBar').style.width=pct+'%';
+  document.getElementById('autoTierCounts').textContent='✅ '+r.ok+' 个可用·❌ '+r.fail+' 个不可用·⏳ '+(total-r.completed)+' 个待测';
+  document.getElementById('autoTierStatus').textContent=r.current||('进度: '+r.completed+'/'+total);
+  if(r.running){
+    _autoTierPollTimer=setTimeout(pollAutoTierProgress,800);
+  }else{
+    const btn=document.getElementById('autoTierBtn');
+    btn.disabled=false;btn.textContent='开始自动定级';
+    if(r.completed>0)t('定级完成: 成功 '+r.ok+' 个');
+  }
+}
+
 // ── 全局缓存 ──
 
 /** initData 中的 Key 已掩码，需要从 API 获取完整 Key 用于操作 */
@@ -1880,6 +1925,158 @@ async function handleSweBenchExport(res) {
   } catch (err) {
     jsonResponse(res, 500, { error: err.message });
   }
+}
+
+// ── 自动模型定级（测试可用性→分配等级） ──
+
+let _autoTierState = { running: false, total: 0, completed: 0, ok: 0, fail: 0, current: '' };
+
+function inferTierFromModelName(modelId) {
+  const lowerId = modelId.toLowerCase();
+  const namePart = modelId.split('/').pop()?.toLowerCase() || '';
+  if (/claude.*(?:opus|sonnet|4)/.test(lowerId) ||
+      /gpt-4(?:o|\.)?(?!.*mini)/.test(lowerId) ||
+      /gemini.*(?:ultra|2\.(?:0|5)|pro)/.test(lowerId) ||
+      /deepseek.*(?:v3|r1)/.test(lowerId) ||
+      /qwen.*(?:3|max|plus|480|235)/.test(lowerId) ||
+      /kimi.*(?:k2|k2\.5|k2\.6)/.test(lowerId)) {
+    if (/mini|tiny|small|nano/.test(namePart)) return 'A+';
+    if (/flash|lite|fast/.test(namePart)) return 'A';
+    return 'S+';
+  }
+  if (/claude|gpt-4|gemini|deepseek|qwen|kimi|mistral-large|llama.*(?:70|90|405|maverick)/.test(lowerId) ||
+      /nemotron.*super|command.*r\b/.test(lowerId)) return 'S';
+  if (/llama|mistral|mixtral|qwen|glm|phi-3|command|gemma.*(?:2|27)/.test(lowerId)) {
+    if (/mini|tiny|small|nano/.test(namePart)) return 'B+';
+    return 'A';
+  }
+  if (/gemma|phi|granite|falcon|dbrx|solar|aya/.test(lowerId)) return 'B+';
+  return 'B'; // 模型测试可用但无模式匹配 → 默认 B
+}
+
+async function handleAutoTier(req, res) {
+  if (_autoTierState.running) {
+    return jsonResponse(res, 200, { running: true, message: '已在运行中' });
+  }
+
+  const config = loadConfig();
+
+  // Collect all ungraded models (no tier in model_tiers)
+  const allModels = {};
+  const userTiers = getAllModelTiers();
+
+  // Static models without tier
+  for (const m of MODELS) {
+    const provider = m[5];
+    const modelId = m[0];
+    if (!provider || !sources[provider]?.url) continue;
+    const key = provider + '/' + modelId;
+    if (userTiers[key]) continue; // Already has tier
+    if (!allModels[provider]) allModels[provider] = [];
+    allModels[provider].push({ modelId, label: m[1] || modelId });
+  }
+
+  // Discovered models without tier
+  try {
+    const discovered = getAllDiscoveredModels();
+    for (const dm of discovered) {
+      const key = dm.provider + '/' + dm.model_id;
+      if (userTiers[key]) continue;
+      if (!allModels[dm.provider]) allModels[dm.provider] = [];
+      // Avoid duplicates
+      if (!allModels[dm.provider].find(m => m.modelId === dm.model_id)) {
+        allModels[dm.provider].push({ modelId: dm.model_id, label: dm.model_id, discovered: true });
+      }
+    }
+  } catch {}
+
+  const totalModels = Object.values(allModels).reduce((s, v) => s + v.length, 0);
+  if (totalModels === 0) {
+    return jsonResponse(res, 200, { running: false, message: '没有未定级的模型' });
+  }
+
+  _autoTierState = { running: true, total: totalModels, completed: 0, ok: 0, fail: 0, current: '' };
+
+  // Start background process
+  runAutoTierBackground(config, allModels).catch(() => {});
+
+  jsonResponse(res, 200, { running: true, total: totalModels });
+}
+
+async function runAutoTierBackground(config, allModels) {
+  const providerEntries = Object.entries(allModels);
+
+  await Promise.all(providerEntries.map(([provider, models]) =>
+    runAutoTierForProvider(config, provider, models)
+  ));
+
+  _autoTierState.running = false;
+  _autoTierState.current = '定级完成';
+}
+
+async function runAutoTierForProvider(config, provider, models) {
+  const source = sources[provider];
+  if (!source || !source.url) return;
+
+  // Get API key
+  let apiKey = '';
+  if (!source.noKeyRequired) {
+    const keys = getAllApiKeys(config, provider);
+    if (keys.length === 0) {
+      // Skip all models for this provider (no key)
+      for (const m of models) {
+        _autoTierState.completed++;
+        _autoTierState.fail++;
+      }
+      return;
+    }
+    apiKey = keys[0];
+  }
+
+  // Serial test for this provider, 5s gap between models
+  for (let i = 0; i < models.length; i++) {
+    const model = models[i];
+    _autoTierState.current = provider + ' → ' + model.label;
+
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (apiKey) headers.Authorization = 'Bearer ' + apiKey;
+      if (provider === 'openrouter') {
+        headers['HTTP-Referer'] = 'https://github.com/alexjm19/free-llm-api-provider';
+        headers['X-Title'] = 'free-llm-api-provider';
+      }
+
+      const resp = await fetch(source.url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ model: model.modelId, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      const available = resp.ok || resp.status === 429;
+
+      if (available) {
+        const tier = inferTierFromModelName(model.modelId);
+        setModelTier(model.modelId, provider, tier);
+        _autoTierState.ok++;
+      } else {
+        _autoTierState.fail++;
+      }
+    } catch {
+      _autoTierState.fail++;
+    }
+
+    _autoTierState.completed++;
+
+    // 5s delay between models (not after the last one)
+    if (i < models.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+  }
+}
+
+function handleAutoTierStatus(res) {
+  jsonResponse(res, 200, { ..._autoTierState });
 }
 
 async function handleGetConfig(res) {
@@ -2591,6 +2788,8 @@ async function handleAdminRequest(parsedUrl, req, res) {
         { method: 'POST',  path: '/swe-bench/sync',     handler: () => handleSweBenchSync(req, res) },
         { method: 'POST',  path: '/swe-bench/test',     handler: () => handleSweBenchTest(req, res) },
         { method: 'GET',   path: '/swe-bench/export',   handler: () => handleSweBenchExport(res) },
+        { method: 'POST',  path: '/auto-tier',          handler: () => handleAutoTier(req, res) },
+        { method: 'GET',   path: '/auto-tier/status',   handler: () => handleAutoTierStatus(res) },
         { method: 'POST',  path: '/export',             handler: () => handleExportConfig(req, res) },
         { method: 'POST',  path: '/import',             handler: () => handleImportConfig(req, res) },
       ];

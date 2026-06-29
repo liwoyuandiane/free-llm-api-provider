@@ -1113,9 +1113,10 @@ function applyTiersToDiscoveredModels() {
         else if (/gemma|phi|granite|falcon|dbrx|solar|aya/.test(lowerId)) {
           tier = 'B+';
         }
-        // Default: B
+        // 不匹配已知模式 → 保持未分级
+        // (不由 applyTiersToDiscoveredModels 分配，交给用户手动或 auto-tier 按钮处理)
         else {
-          tier = 'B';
+          // skip
         }
       }
 
