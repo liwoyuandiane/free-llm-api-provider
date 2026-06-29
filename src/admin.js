@@ -748,35 +748,39 @@ async function rP() {
     const hm = {}; if (hl.providers) for (const p of hl.providers) hm[p.key] = p;
     // 获取测试模型配置
     const tm = cfg.testModels || initData.testModels || {};
-    // 只渲染有 API Key 的提供商
+    // 渲染有 API Key 或无 Key 提供商
     const providersWithKeys = pr.filter(p => {
+      if (p.noKeyRequired) return true; // Always show no-key providers
       const ks = km[p.key] || [];
       return (Array.isArray(ks) ? ks : [ks]).length > 0;
     });
     el.innerHTML = providersWithKeys.map(p => {
       const en = em[p.key] !== false;
       const ks = km[p.key] || [];
+      const keysArr = Array.isArray(ks) ? ks : [ks];
       const h = hm[p.key];
       const st = h ? h.status : 'unknown';
       const stColor = st === 'up' ? 'var(--green)' : st === 'down' ? 'var(--red)' : 'var(--mut)';
-      const keyCount = (Array.isArray(ks) ? ks : [ks]).length;
+      const keyCount = keysArr.length;
+      const noKey = p.noKeyRequired;
       return '<div class="row">' +
         '<div class="pi">' +
           '<div class="pi-top">' +
             '<label class="tog"><input type="checkbox" ' + (en ? 'checked' : '') + ' onchange="togP(\\'' + jsesc(p.key) + '\\',this.checked)"><span class="sl"></span></label>' +
             '<span class="pn">' + esc(p.name) + '</span>' +
             '<span class="dot ' + st + '"></span>' +
-            '<span class="pi-count">' + keyCount + ' 个密钥</span>' +
+            '<span class="pi-count">' + (noKey ? '无需 Key' : (keyCount + ' 个密钥')) + '</span>' +
             '<div class="pi-actions">' +
               '<button class="btn btn-sm" onclick="tP(\\'' + jsesc(p.key) + '\\')">测试</button>' +
               '<button class="btn btn-sm" onclick="dP(\\'' + jsesc(p.key) + '\\')">发现模型</button>' +
             '</div>' +
           '</div>' +
+          (noKey && keyCount === 0 ? '' :
           '<div class="kl">' +
-            ((Array.isArray(ks) ? ks : [ks]).map(k => {
+            (keysArr.map(k => {
               const ks2 = typeof k === 'string' ? k : (k.key || k);
               const nt = typeof k === 'object' && k.notes ? k.notes : '';
-              const shortKey = ks2.slice(0,8) + '...' + ks2.slice(-4);
+              const shortKey = ks2.length > 12 ? ks2.slice(0,8) + '...' + ks2.slice(-4) : ks2;
               const dotColor = st === 'up' ? 'var(--green)' : st === 'down' ? 'var(--red)' : 'var(--mut)';
               const stText = st === 'up' ? '健康' : st === 'down' ? '无效' : '未知';
               return '<div class="ke">' +
@@ -789,7 +793,7 @@ async function rP() {
                   '<button class="ka-del" onclick="dk(\\'' + jsesc(p.key) + '\\',\\'' + jsesc(ks2) + '\\')">移除</button>' +
                 '</span></div>';
             }).join('')) +
-          '</div>' +
+          '</div>') +
           '<div style="display:flex;gap:6px;align-items:center;margin-top:6px">' +
             '<span style="font-size:13px;color:var(--mut)">测试模型:</span>' +
             '<input type="text" value="' + esc(tm[p.key] || '') + '" placeholder="auto" style="flex:1;max-width:200px;font-size:13px;background:var(--bg);border:1px solid var(--b2);border-radius:4px;color:var(--text);padding:2px 6px" onchange="stm(\\'' + jsesc(p.key) + '\\',this.value)">' +
@@ -945,7 +949,11 @@ function cDM(){document.getElementById('discoverModal').classList.remove('show')
  * aPK — 添加 API Key 或自定义供应商
  * 选择"自定义供应商"时，创建自定义提供商 + 添加 Key
  */
-async function aPK(){const p=document.getElementById('nkp').value,k=document.getElementById('nkv').value,n=document.getElementById('nkNotes').value;if(p==='__custom__'){const name=document.getElementById('cpName').value.trim();const url=document.getElementById('cpUrl').value.trim();if(!name||!url){t('请填写自定义供应商的名称和 URL','err');return;}if(!k){t('请填写 Key','err');return;}await api('/custom-provider',{method:'POST',body:{name,baseUrl:url,apiKey:k,notes:n}});document.getElementById('cpName').value='';document.getElementById('cpUrl').value='';document.getElementById('nkv').value='';document.getElementById('nkNotes').value='';t('自定义供应商已添加');rP();return;}if(!p||!k){t('请选择提供商并输入Key','err');return;}await api('/provider-key',{method:'POST',body:{provider:p,key:k,notes:n}});document.getElementById('nkv').value='';document.getElementById('nkNotes').value='';t('Key 已添加');rP();}
+async function aPK(){const p=document.getElementById('nkp').value,k=document.getElementById('nkv').value,n=document.getElementById('nkNotes').value;if(p==='__custom__'){const name=document.getElementById('cpName').value.trim();const url=document.getElementById('cpUrl').value.trim();if(!name||!url){t('请填写自定义供应商的名称和 URL','err');return;}if(!k){t('请填写 Key','err');return;}await api('/custom-provider',{method:'POST',body:{name,baseUrl:url,apiKey:k,notes:n}});document.getElementById('cpName').value='';document.getElementById('cpUrl').value='';document.getElementById('nkv').value='';document.getElementById('nkNotes').value='';t('自定义供应商已添加');rP();return;}// Check if selected provider is noKeyRequired (allows empty key)
+const pr=initData.allProviders||[];const found=pr.find(x=>x.key===p);
+if(!p){t('请选择提供商','err');return;}
+if(!k && !(found&&found.noKeyRequired)){t('请选择提供商并输入Key','err');return;}
+await api('/provider-key',{method:'POST',body:{provider:p,key:k||'',notes:n}});document.getElementById('nkv').value='';document.getElementById('nkNotes').value='';t('Key 已添加');rP();}
 /**
  * onNKPChange — 选择自定义供应商时显示额外字段
  */
@@ -2204,7 +2212,12 @@ async function handleUpdateConfig(req, res) {
 async function handleAddProviderKey(req, res) {
   const body = await readJsonBody(req);
   const { provider, key, notes } = body;
-  if (!provider || !key) {
+  if (!provider) {
+    return jsonResponse(res, 400, { error: 'Missing provider' });
+  }
+  // Allow empty key for noKeyRequired providers (AI Horde, Pollinations, etc.)
+  const src = sources[provider];
+  if (!key && (!src || !src.noKeyRequired)) {
     return jsonResponse(res, 400, { error: 'Missing provider or key' });
   }
   // Validate provider name: alphanumeric, hyphens, underscores, max 100 chars
