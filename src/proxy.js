@@ -1428,6 +1428,87 @@ function createServer() {
       return;
     }
 
+    // ============================================================
+    // OpenAI-compatible /v1/embeddings endpoint
+    // ============================================================
+    if (pathname === '/v1/embeddings' && req.method === 'POST') {
+      const authHeader = req.headers.authorization || '';
+      const bearerMatch = authHeader.match(/^bearer\s+(.+)$/i);
+      const apiKey = bearerMatch ? bearerMatch[1].trim() : authHeader.trim();
+      let isAuthed = false;
+      if (apiKey && timingSafeEqual(apiKey, getServerKey())) isAuthed = true;
+      if (!isAuthed) {
+        try { const cookies = parseCookies(req); if (cookies.flap_session) { const s = validateSession(cookies.flap_session); if (s) isAuthed = true; } } catch {}
+      }
+      if (!isAuthed) { jsonError(res, 401, 'Invalid API key'); return; }
+
+      let body = '';
+      req.on('data', chunk => { body += chunk; if (body.length > 1024 * 1024) { req.destroy(); body = ''; } });
+      req.on('end', async () => {
+        try {
+          const reqBody = JSON.parse(body);
+          const modelId = reqBody.model || '';
+          const input = reqBody.input;
+          if (!input) { jsonError(res, 400, 'Missing required field: input'); return; }
+          if (!modelId) { jsonError(res, 400, 'Missing required field: model'); return; }
+
+          // Find provider from model ID (provider/model_id format)
+          const config = loadConfig();
+          const providers = getPrioritizedProviders(config);
+          const parts = modelId.split('/');
+          const providerKey = parts.length > 1 ? parts[0] : null;
+
+          let chosenProvider = null;
+          if (providerKey) {
+            chosenProvider = providers.find(p => p.key === providerKey && p.apiKey);
+          }
+          if (!chosenProvider) {
+            chosenProvider = providers.find(p => p.apiKey && !isCircuitOpen(p.key));
+          }
+          if (!chosenProvider) {
+            jsonError(res, 503, 'No available provider for embeddings');
+            return;
+          }
+
+          // Forward request (OpenAI embeddings API format)
+          // Use provider's base URL: replace /chat/completions with /embeddings or use /v1/embeddings
+          let embedUrl = chosenProvider.url;
+          if (embedUrl.includes('/chat/completions')) {
+            embedUrl = embedUrl.replace('/chat/completions', '/embeddings');
+          } else {
+            embedUrl = embedUrl.replace(/\/+$/, '') + '/embeddings';
+          }
+
+          const forwardBody = {
+            model: parts.length > 1 ? parts.slice(1).join('/') : modelId,
+            input: input,
+          };
+          if (reqBody.encoding_format) forwardBody.encoding_format = reqBody.encoding_format;
+
+          const resp = await fetch(embedUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${chosenProvider.apiKey}`,
+            },
+            body: JSON.stringify(forwardBody),
+            signal: AbortSignal.timeout(30000),
+          });
+
+          const data = await resp.json();
+          // Fix model name in response to include provider prefix
+          if (data.model && providerKey && !data.model.startsWith(providerKey + '/')) {
+            data.model = providerKey + '/' + data.model;
+          }
+          res.writeHead(resp.status, { 'Content-Type': 'application/json', 'X-Provider': chosenProvider.key });
+          res.end(JSON.stringify(data));
+        } catch (err) {
+          jsonError(res, 502, err.message || 'Embeddings failed');
+        }
+      });
+      return;
+    }
+
     // Models list — tier aliases + synced models + discovered models
     if (pathname === '/v1/models' && req.method === 'GET') {
       const { getAllDiscoveredModels } = require('./admin');
