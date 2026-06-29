@@ -2377,7 +2377,7 @@ async function handleTestSingleKey(req, res) {
 
 // [Fix 2026-06-24] 共享默认测试模型映射，供 "测试" 和 "检查" 两个按钮使用
 const DEFAULT_TEST_MODELS = {
-  nvidia: 'meta/llama-3.1-8b-instruct',
+  nvidia: 'deepseek-ai/deepseek-v3.2',
   groq: 'llama-3.1-8b-instant',
   cerebras: 'llama3.1-8b',
   googleai: 'gemma-3-27b-it',
@@ -2385,12 +2385,11 @@ const DEFAULT_TEST_MODELS = {
   zai: 'zai/glm-4.5-flash',
   openrouter: 'meta-llama/llama-3.1-8b-instruct:free',
   siliconflow: 'Qwen/Qwen2.5-Coder-32B-Instruct',
-  aihorde: 'MythoMax-L2-13b',
   cloudflare: '@cf/meta/llama-3.1-8b-instruct',
   ovhcloud: 'Meta-Llama-3_3-70B-Instruct',
   huggingface: 'deepseek-ai/DeepSeek-V3-0324',
   pollinations: 'openai',
-  llm7: 'gpt-4o-mini',
+  llm7: 'codestral-latest',
 };
 
 async function runKeyTest(res, url, provider, apiKey) {

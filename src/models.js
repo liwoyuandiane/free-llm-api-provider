@@ -1,241 +1,90 @@
 /**
  * Model Catalog
  *
- * Static model catalog — tiers stored in swe-bench.json and synced by syncSweBenchScores().
- * This file only provides model ID, display name, and context window for offline fallback.
+ * Models primarily come from litellm sync (sync_models table via sync.js).
+ * This file only defines provider configurations and models for providers
+ * NOT covered by litellm's catalog. See PROVIDER_MAP in sync.js.
  */
 
-// NVIDIA NIM
-const nvidiaNim = [
-  ['stepfun-ai/step-3.5-flash', 'Step 3.5 Flash', '256k'],
-  ['qwen/qwen3-next-80b-a3b-instruct', 'Qwen3 80B Instruct', '128k'],
-  ['qwen/qwen3.5-397b-a17b', 'Qwen3.5 400B VLM', '128k'],
-  ['openai/gpt-oss-120b', 'GPT OSS 120B', '128k'],
-  ['meta/llama-4-maverick-17b-128e-instruct', 'Llama 4 Maverick', '1M'],
-  ['mistralai/mistral-large-3-675b-instruct-2512', 'Mistral Large 675B', '256k'],
-  ['nvidia/llama-3.3-nemotron-super-49b-v1.5', 'Nemotron Super 49B', '128k'],
-  ['nvidia/nemotron-3-nano-30b-a3b', 'Nemotron Nano 30B', '128k'],
-  ['openai/gpt-oss-20b', 'GPT OSS 20B', '128k'],
-  ['meta/llama-3.3-70b-instruct', 'Llama 3.3 70B', '128k'],
-  ['bytedance/seed-oss-36b-instruct', 'Seed OSS 36B', '32k'],
-  ['stockmark/stockmark-2-100b-instruct', 'Stockmark 100B', '32k'],
-  ['mistralai/ministral-14b-instruct-2512', 'Ministral 14B', '32k'],
-];
+// ── Models for providers NOT in litellm ──
 
-// Groq
-const groq = [
-  ['llama-3.3-70b-versatile', 'Llama 3.3 70B', '128k'],
-  ['meta-llama/llama-4-scout-17b-16e-instruct', 'Llama 4 Scout', '131k'],
-  ['llama-3.1-8b-instant', 'Llama 3.1 8B', '128k'],
-  ['openai/gpt-oss-120b', 'GPT OSS 120B', '128k'],
-  ['openai/gpt-oss-20b', 'GPT OSS 20B', '128k'],
-  ['openai/gpt-oss-safeguard-20b', 'GPT OSS Safeguard 20B', '128k'],
-  ['meta-llama/llama-prompt-guard-2-86m', 'Llama Prompt Guard 2', '8k'],
-  ['qwen/qwen3-32b', 'Qwen3 32B', '131k'],
-  ['groq/compound', 'Groq Compound', '131k'],
-  ['groq/compound-mini', 'Groq Compound Mini', '131k'],
-];
-
-// Cerebras
-const cerebras = [
-  ['gpt-oss-120b', 'GPT OSS 120B', '128k'],
-  ['qwen-3-235b-a22b-instruct-2507', 'Qwen3 235B', '128k'],
-  ['llama3.1-8b', 'Llama 3.1 8B', '128k'],
-  ['zai-glm-4.7', 'GLM 4.7', '200k'],
-];
-
-// OpenRouter
-const openrouter = [
-  ['qwen/qwen3.6-plus:free', 'Qwen3.6 Plus', '1M'],
-  ['qwen/qwen3-coder:free', 'Qwen3 Coder 480B', '262k'],
-  ['minimax/minimax-m2.5:free', 'MiniMax M2.5', '197k'],
-  ['z-ai/glm-4.5-air:free', 'GLM 4.5 Air', '131k'],
-  ['stepfun/step-3.5-flash:free', 'Step 3.5 Flash', '256k'],
-  ['arcee-ai/trinity-large-preview:free', 'Arcee Trinity Large', '131k'],
-  ['xiaomi/mimo-v2-flash:free', 'MiMo V2 Flash', '262k'],
-  ['deepseek/deepseek-r1-0528:free', 'DeepSeek R1 0528', '164k'],
-  ['nvidia/nemotron-3-super-120b-a12b:free', 'Nemotron 3 Super', '262k'],
-  ['qwen/qwen3-next-80b-a3b-instruct:free', 'Qwen3 80B Instruct', '131k'],
-  ['arcee-ai/trinity-mini:free', 'Arcee Trinity Mini', '131k'],
-  ['nvidia/nemotron-nano-12b-v2-vl:free', 'Nemotron Nano 12B VL', '128k'],
-  ['nvidia/nemotron-nano-9b-v2:free', 'Nemotron Nano 9B', '128k'],
-  ['nousresearch/hermes-3-llama-3.1-405b:free', 'Hermes 3 405B', '131k'],
-  ['openai/gpt-oss-120b:free', 'GPT OSS 120B', '131k'],
-  ['openai/gpt-oss-20b:free', 'GPT OSS 20B', '131k'],
-  ['nvidia/nemotron-3-nano-30b-a3b:free', 'Nemotron Nano 30B', '128k'],
-  ['cognitivecomputations/dolphin-mistral-24b-venice-edition:free', 'Dolphin Mistral 24B', '33k'],
-  ['meta-llama/llama-3.3-70b-instruct:free', 'Llama 3.3 70B', '131k'],
-  ['mistralai/mistral-small-3.1-24b-instruct:free', 'Mistral Small 3.1', '128k'],
-  ['google/gemma-3-27b-it:free', 'Gemma 3 27B', '131k'],
-  ['google/gemma-3-12b-it:free', 'Gemma 3 12B', '131k'],
-  ['qwen/qwen3-4b:free', 'Qwen3 4B', '41k'],
-  ['google/gemma-3n-e4b-it:free', 'Gemma 3n E4B', '8k'],
-  ['google/gemma-3-4b-it:free', 'Gemma 3 4B', '33k'],
-];
-
-// Hugging Face
-const huggingface = [
-  ['deepseek-ai/DeepSeek-V3-0324', 'DeepSeek V3 0324', '128k'],
-  ['Qwen/Qwen2.5-Coder-32B-Instruct', 'Qwen2.5 Coder 32B', '32k'],
-];
-
-// Codestral (Mistral)
-const codestral = [
-  ['codestral-latest', 'Codestral', '256k'],
-];
-
-// Google AI Studio
+// Google AI Studio (Gemini) — litellm maps as 'gemini', not 'googleai'
 const googleai = [
+  ['gemini-2.5-flash', 'Gemini 2.5 Flash', '1M'],
+  ['gemini-2.0-flash', 'Gemini 2.0 Flash', '1M'],
   ['gemma-4-31b-it', 'Gemma 4 31B', '256k'],
-  ['gemma-4-26b-a4b-it', 'Gemma 4 26B MoE', '256k'],
   ['gemma-3-27b-it', 'Gemma 3 27B', '128k'],
   ['gemma-3-12b-it', 'Gemma 3 12B', '128k'],
-  ['gemma-4-e4b-it', 'Gemma 4 E4B', '128k'],
-  ['gemma-3-4b-it', 'Gemma 3 4B', '128k'],
-];
-
-// ZAI (Zhipu AI)
-const zai = [
-  ['zai/glm-5', 'GLM-5', '128k'],
-  ['zai/glm-4.7', 'GLM-4.7', '200k'],
-  ['zai/glm-4.7-flash', 'GLM-4.7-Flash', '200k'],
-  ['zai/glm-4.5', 'GLM-4.5', '128k'],
-  ['zai/glm-4.5-air', 'GLM-4.5-Air', '128k'],
-  ['zai/glm-4.5-flash', 'GLM-4.5-Flash', '128k'],
-  ['zai/glm-4.6', 'GLM-4.6', '128k'],
-];
-
-// SiliconFlow
-const siliconflow = [
-  ['Qwen/Qwen3-Coder-480B-A35B-Instruct', 'Qwen3 Coder 480B', '256k'],
-  ['deepseek-ai/DeepSeek-V3.2', 'DeepSeek V3.2', '128k'],
-  ['Qwen/Qwen3-235B-A22B', 'Qwen3 235B', '128k'],
-  ['deepseek-ai/DeepSeek-R1', 'DeepSeek R1', '128k'],
-  ['Qwen/Qwen3-Coder-30B-A3B-Instruct', 'Qwen3 Coder 30B', '32k'],
-  ['Qwen/Qwen2.5-Coder-32B-Instruct', 'Qwen2.5 Coder 32B', '32k'],
-];
-
-// Cloudflare
-const cloudflare = [
-  ['@cf/moonshotai/kimi-k2.5', 'Kimi K2.5', '256k'],
-  ['@cf/zhipu/glm-4.7-flash', 'GLM-4.7-Flash', '131k'],
-  ['@cf/openai/gpt-oss-120b', 'GPT OSS 120B', '128k'],
-  ['@cf/qwen/qwq-32b', 'QwQ 32B', '131k'],
-  ['@cf/meta/llama-4-scout-17b-16e-instruct', 'Llama 4 Scout', '131k'],
-  ['@cf/nvidia/nemotron-3-120b-a12b', 'Nemotron 3 Super', '128k'],
-  ['@cf/qwen/qwen3-30b-a3b-fp8', 'Qwen3 30B MoE', '128k'],
-  ['@cf/qwen/qwen2.5-coder-32b-instruct', 'Qwen2.5 Coder 32B', '32k'],
-  ['@cf/deepseek-ai/deepseek-r1-distill-qwen-32b', 'R1 Distill 32B', '128k'],
-  ['@cf/openai/gpt-oss-20b', 'GPT OSS 20B', '128k'],
-  ['@cf/meta/llama-3.3-70b-instruct-fp8-fast', 'Llama 3.3 70B', '128k'],
-  ['@cf/google/gemma-4-26b-a4b-it', 'Gemma 4 26B MoE', '256k'],
-  ['@cf/mistralai/mistral-small-3.1-24b-instruct', 'Mistral Small 3.1', '128k'],
-  ['@cf/ibm/granite-4.0-h-micro', 'Granite 4.0 Micro', '128k'],
-  ['@cf/meta/llama-3.1-8b-instruct', 'Llama 3.1 8B', '128k'],
-];
-
-// OVHcloud
-const ovhcloud = [
-  ['Qwen3-Coder-30B-A3B-Instruct', 'Qwen3 Coder 30B MoE', '256k'],
-  ['gpt-oss-120b', 'GPT OSS 120B', '131k'],
-  ['gpt-oss-20b', 'GPT OSS 20B', '131k'],
-  ['Meta-Llama-3_3-70B-Instruct', 'Llama 3.3 70B', '131k'],
-  ['Qwen3-32B', 'Qwen3 32B', '32k'],
-  ['DeepSeek-R1-Distill-Llama-70B', 'R1 Distill 70B', '131k'],
-  ['Mistral-Small-3.2-24B-Instruct-2506', 'Mistral Small 3.2', '131k'],
-  ['Llama-3.1-8B-Instruct', 'Llama 3.1 8B', '131k'],
-];
-
-// OpenCode Zen
-const opencodeZen = [
-  ['big-pickle', 'Big Pickle', '200k'],
-  ['mimo-v2-pro-free', 'MiMo V2 Pro Free', '1M'],
-  ['mimo-v2-flash-free', 'MiMo V2 Flash Free', '262k'],
-  ['mimo-v2-omni-free', 'MiMo V2 Omni Free', '262k'],
-  ['gpt-5-nano', 'GPT 5 Nano', '400k'],
-  ['minimax-m2.5-free', 'MiniMax M2.5 Free', '200k'],
-  ['nemotron-3-super-free', 'Nemotron 3 Super Free', '1M'],
-];
-
-// GitHub Models
-const githubModels = [
-  ['gpt-4o', 'GPT-4o', '128k'],
-  ['gpt-4o-mini', 'GPT-4o Mini', '128k'],
-  ['Meta-Llama-3.1-405B-Instruct', 'Llama 3.1 405B', '128k'],
-  ['Meta-Llama-3.1-70B-Instruct', 'Llama 3.1 70B', '128k'],
-  ['Mistral-Large-2411', 'Mistral Large', '128k'],
-  ['Cohere-command-r-plus', 'Command R+', '128k'],
-  ['Phi-3.5-MoE-instruct', 'Phi 3.5 MoE', '128k'],
-];
-
-// Cohere
-const cohereModels = [
-  ['command-a', 'Command A', '256k'],
-  ['command-r-plus', 'Command R+', '128k'],
-  ['command-r', 'Command R', '128k'],
-  ['command-r7b-12-2024', 'Command R 7B', '128k'],
-];
-
-// Reka
-const rekaModels = [
-  ['reka-core-20250219', 'Reka Core', '128k'],
-  ['reka-flash-20250219', 'Reka Flash', '128k'],
-  ['reka-edge-20250219', 'Reka Edge', '128k'],
-];
-
-// Pollinations (free, no key required)
-const pollinationsModels = [
-  ['openai', 'GPT-4o (via Pollinations)', '128k'],
-  ['mistral', 'Mistral (via Pollinations)', '128k'],
-  ['llama', 'Llama (via Pollinations)', '128k'],
-];
-
-// LLM7 (anonymous, no key required)
-const llm7Models = [
-  ['gpt-4o', 'GPT-4o (via LLM7)', '128k'],
-  ['gpt-4o-mini', 'GPT-4o Mini (via LLM7)', '128k'],
-  ['claude-3-5-sonnet', 'Claude 3.5 Sonnet (via LLM7)', '128k'],
-  ['llama-3.1-70b', 'Llama 3.1 70B (via LLM7)', '128k'],
-];
-
-// New providers
-const ollamaCloud = [
-  ['qwen3-coder:480b', 'Qwen3-Coder 480B', '262k'],
-  ['qwen3-coder-next', 'Qwen3-Coder Next', '262k'],
-  ['glm-4.7', 'GLM-4.7', '131k'],
-  ['gpt-oss:120b', 'GPT-OSS 120B', '131k'],
-  ['gpt-oss:20b', 'GPT-OSS 20B', '131k'],
-  ['gemma4:31b', 'Gemma 4 31B', '131k'],
-];
-
-const kiloGateway = [
-  ['poolside/laguna-m.1:free', 'Poolside Laguna M.1', '262k'],
-  ['stepfun/step-3.7-flash:free', 'StepFun Step 3.7 Flash', '262k'],
-  ['nvidia/nemotron-3-super-120b-a12b:free', 'Nemotron 3 Super 120B', '262k'],
-];
-
-const agnesAi = [];
-const routeway = [];
-const bazaarlink = [];
-const ainativeStudio = [];
-const aihorde = [
-  ['MythoMax-L2-13b', 'MythoMax 13B', '8k'],
-  ['mixtral-8x7b-instruct', 'Mixtral 8x7B', '32k'],
-  ['llama-3-70b-instruct', 'Llama 3 70B', '8k'],
-  ['wizard-vicuna-13b', 'Wizard Vicuna 13B', '4k'],
 ];
 
 // Anthropic / Claude
 const anthropicModels = [
   ['claude-sonnet-4-8', 'Claude Sonnet 4.8', '200k'],
   ['claude-opus-4-8', 'Claude Opus 4.8', '200k'],
-  ['claude-sonnet-4-6', 'Claude Sonnet 4.6', '200k'],
-  ['claude-opus-4-6', 'Claude Opus 4.6', '200k'],
-  ['claude-sonnet-4-5', 'Claude Sonnet 4.5', '200k'],
   ['claude-haiku-4-5', 'Claude Haiku 4.5', '200k'],
 ];
 
-// Sources map
+// Pollinations (not in litellm)
+const pollinationsModels = [
+  ['openai', 'GPT-OSS 20B (via Pollinations)', '128k'],
+];
+
+// LLM7 (not in litellm)
+const llm7Models = [
+  ['codestral-latest', 'Codestral Latest', '128k'],
+  ['deepseek-v4-flash', 'DeepSeek V4 Flash', '128k'],
+  ['gemini-2.5-flash', 'Gemini 2.5 Flash', '128k'],
+  ['gpt-5.4', 'GPT 5.4', '128k'],
+  ['kimi-k2.6', 'Kimi K2.6', '128k'],
+];
+
+// OpenCode Zen (not in litellm)
+const opencodeZen = [
+  ['big-pickle', 'Big Pickle', '200k'],
+  ['mimo-v2-pro-free', 'MiMo V2 Pro Free', '1M'],
+  ['mimo-v2-flash-free', 'MiMo V2 Flash Free', '262k'],
+  ['minimax-m2.5-free', 'MiniMax M2.5 Free', '200k'],
+  ['nemotron-3-super-free', 'Nemotron 3 Super Free', '1M'],
+];
+
+// Ollama Cloud (not in litellm)
+const ollamaCloud = [
+  ['qwen3-coder:480b', 'Qwen3-Coder 480B', '262k'],
+  ['gpt-oss:120b', 'GPT-OSS 120B', '131k'],
+  ['gemma4:31b', 'Gemma 4 31B', '131k'],
+];
+
+// GitHub Models (not in litellm)
+const githubModels = [
+  ['gpt-4o', 'GPT-4o', '128k'],
+  ['gpt-4o-mini', 'GPT-4o Mini', '128k'],
+];
+
+// Cohere (not in litellm)
+const cohereModels = [
+  ['command-a', 'Command A', '256k'],
+  ['command-r-plus', 'Command R+', '128k'],
+];
+
+// Reka (not in litellm)
+const rekaModels = [
+  ['reka-core-20250219', 'Reka Core', '128k'],
+  ['reka-flash-20250219', 'Reka Flash', '128k'],
+];
+
+// ── Empty arrays for providers served by litellm sync ──
+const nvidiaNim = []; const groq = []; const cerebras = [];
+const openrouter = []; const huggingface = []; const codestral = [];
+const zai = []; const siliconflow = []; const cloudflare = [];
+const ovhcloud = []; const sambanova = []; const deepinfra = [];
+const replicate = []; const hyperbolic = []; const scaleway = [];
+const perplexity = []; const fireworks = []; const together = [];
+const qwen = []; const chutes = []; const iflow = [];
+const reka = []; const kiloGateway = []; const agnesAi = [];
+const routeway = []; const bazaarlink = []; const ainativeStudio = [];
+const aihorde = [];
+
+// ── Provider configurations ──
 const sources = {
   nvidia: { name: 'NVIDIA', url: 'https://integrate.api.nvidia.com/v1/chat/completions', models: nvidiaNim },
   groq: { name: 'Groq', url: 'https://api.groq.com/openai/v1/chat/completions', models: groq },
@@ -255,16 +104,16 @@ const sources = {
   llm7: { name: 'LLM7', url: 'https://api.llm7.io/v1/chat/completions', models: llm7Models, noKeyRequired: true },
   'opencode-zen': { name: 'OpenCode Zen', url: 'https://opencode.ai/zen/v1/chat/completions', models: opencodeZen },
   'ollama-cloud': { name: 'Ollama Cloud', url: 'https://api.ollama.com/v1/chat/completions', models: ollamaCloud },
-  'kilo-gateway': { name: 'Kilo Gateway', url: 'https://api.kilo.ai/v1/chat/completions', models: kiloGateway, noKeyRequired: true, noSystemRole: true },
-  'agnes-ai': { name: 'Agnes AI', url: 'https://api.agnes-ai.com/v1/chat/completions', models: agnesAi },
-  'routeway': { name: 'Routeway', url: 'https://api.routeway.ai/v1/chat/completions', models: routeway },
-  'bazaarlink': { name: 'BazaarLink', url: 'https://api.bazaarlink.ai/v1/chat/completions', models: bazaarlink },
-  'ainative-studio': { name: 'AI Native Studio', url: 'https://api.ainative.studio/v1/chat/completions', models: ainativeStudio },
-  'aihorde': { name: 'AI Horde', url: 'https://aihorde.net/api/v2/chat/completions', models: aihorde, noKeyRequired: true },
+  'kilo-gateway': { name: 'Kilo Gateway', url: null, models: kiloGateway, noKeyRequired: true },
+  'agnes-ai': { name: 'Agnes AI', url: null, models: agnesAi },
+  'routeway': { name: 'Routeway', url: null, models: routeway },
+  'bazaarlink': { name: 'BazaarLink', url: null, models: bazaarlink },
+  'ainative-studio': { name: 'AI Native Studio', url: null, models: ainativeStudio },
+  'aihorde': { name: 'AI Horde', url: null, models: aihorde, noKeyRequired: true },
   'anthropic': { name: 'Anthropic', url: 'https://api.anthropic.com/v1/messages', models: anthropicModels, anthropicFormat: true },
 };
 
-// Flat MODELS array with providerKey as 4th element (tier/swe from swe-bench.json)
+// ── Flat MODELS array (for backward compatibility) ──
 const MODELS = [];
 for (const [sourceKey, sourceData] of Object.entries(sources)) {
   if (!sourceData || !sourceData.models) continue;
@@ -276,37 +125,30 @@ for (const [sourceKey, sourceData] of Object.entries(sources)) {
 
 // Environment variable names per provider
 const ENV_VAR_NAMES = {
-  nvidia: 'NVIDIA_API_KEY',
-  groq: 'GROQ_API_KEY',
-  cerebras: 'CEREBRAS_API_KEY',
-  openrouter: 'OPENROUTER_API_KEY',
-  huggingface: 'HUGGINGFACE_API_KEY',
-  codestral: 'CODESTRAL_API_KEY',
-  googleai: 'GOOGLE_API_KEY',
-  siliconflow: 'SILICONFLOW_API_KEY',
-  cloudflare: 'CLOUDFLARE_API_TOKEN',
-  zai: 'ZAI_API_KEY',
-  ovhcloud: 'OVH_AI_ENDPOINTS_ACCESS_TOKEN',
-  github: 'GITHUB_TOKEN',
-  cohere: 'COHERE_API_KEY',
-  reka: 'REKA_API_KEY',
-  'ollama-cloud': 'OLLAMA_API_KEY',
-  'agnes-ai': 'AGNES_API_KEY',
-  'routeway': 'ROUTEWAY_API_KEY',
-  'bazaarlink': 'BAZAARLINK_API_KEY',
-  'ainative-studio': 'AINATIVE_API_KEY',
-  'aihorde': 'AIHORDE_API_KEY',
+  nvidia: 'NVIDIA_API_KEY', groq: 'GROQ_API_KEY',
+  cerebras: 'CEREBRAS_API_KEY', sambanova: 'SAMBANOVA_API_KEY',
+  openrouter: 'OPENROUTER_API_KEY', huggingface: ['HUGGINGFACE_API_KEY', 'HF_TOKEN'],
+  replicate: 'REPLICATE_API_TOKEN', deepinfra: ['DEEPINFRA_API_KEY', 'DEEPINFRA_TOKEN'],
+  fireworks: 'FIREWORKS_API_KEY', codestral: 'CODESTRAL_API_KEY',
+  hyperbolic: 'HYPERBOLIC_API_KEY', scaleway: 'SCALEWAY_API_KEY',
+  googleai: 'GOOGLE_API_KEY', siliconflow: 'SILICONFLOW_API_KEY',
+  together: 'TOGETHER_API_KEY', cloudflare: ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_API_KEY'],
+  perplexity: ['PERPLEXITY_API_KEY', 'PPLX_API_KEY'], qwen: 'DASHSCOPE_API_KEY',
+  zai: 'ZAI_API_KEY', iflow: 'IFLOW_API_KEY', chutes: 'CHUTES_API_KEY',
+  ovhcloud: 'OVH_AI_ENDPOINTS_ACCESS_TOKEN', github: 'GITHUB_TOKEN',
+  cohere: 'COHERE_API_KEY', reka: 'REKA_API_KEY',
+  pollinations: null, llm7: null, 'opencode-zen': null,
 };
 
-// Tier order for sorting (highest first)
-const TIER_ORDER = ['S+', 'S', 'A+', 'A', 'A-', 'B+', 'B', 'C'];
+// Context windows per provider
+const PROVIDER_CONTEXT_LIMITS = {
+  nvidia: 131072, groq: 131072, cerebras: 131072, googleai: 1048576,
+  openrouter: 262144, codestral: 262144, github: 131072, cohere: 262144,
+  cloudflare: 131072, pollinations: 4096, llm7: 4096,
+};
 
-// Helper: Get models by tier
-function getModelsByTier(tier) {
-  return MODELS.filter(m => m[2] === tier);
-}
+// ── Helper functions ──
 
-// Helper: Get models by provider (synced first, static as fallback)
 function getModelsByProvider(providerKey) {
   const staticModels = MODELS.filter(m => m[5] === providerKey);
   try {
@@ -315,13 +157,9 @@ function getModelsByProvider(providerKey) {
     if (synced.length > 0) {
       const syncedIds = new Set(synced.map(m => m[0]));
       const merged = [];
-      for (const sm of synced) {
-        merged.push([sm[0], sm[1], sm[2], sm[3], sm[4], providerKey]);
-      }
+      for (const sm of synced) merged.push([sm[0], sm[1], sm[2], sm[3], sm[4], providerKey]);
       for (const m of staticModels) {
-        if (!syncedIds.has(m[0])) {
-          merged.push(m);
-        }
+        if (!syncedIds.has(m[0])) merged.push(m);
       }
       return merged;
     }
@@ -329,81 +167,36 @@ function getModelsByProvider(providerKey) {
   return staticModels;
 }
 
-// Helper: Get providers for a model
+function getModelsByTier(tier) {
+  return MODELS.filter(m => m[2] === tier);
+}
+
 function getProviderForModel(modelId) {
   const found = MODELS.find(m => m[0] === modelId);
   return found ? found[5] : null;
 }
 
-// Helper: Check if a provider has passed its shutdown date
 function isProviderShutdown(providerKey) {
-  const src = sources[providerKey];
-  if (!src || !src.shutdownDate) return false;
-  try {
-    return new Date() > new Date(src.shutdownDate);
-  } catch {
-    return false;
-  }
+  return false;
 }
 
-// Helper: Get all providers that have API endpoints
-function getApiProviders() {
-  return Object.entries(sources)
-    .filter(([key, data]) => data.url && !data.cliOnly && !isProviderShutdown(key))
-    .map(([key, _]) => key);
-}
-
-// Parse context window string to number of tokens
-function parseCtxWindow(ctxStr) {
-  if (!ctxStr) return 128000;
-  const num = parseFloat(ctxStr);
-  if (isNaN(num)) return 128000;
-  if (ctxStr.includes('M')) return Math.round(num * 1000000);
-  if (ctxStr.includes('k')) return Math.round(num * 1000);
-  return num;
-}
-
-// Helper: Get model limits
 function getModelLimits(modelId) {
-  const model = MODELS.find(m => m[0] === modelId);
-  if (model) {
-    const context = parseCtxWindow(model[4]);
-    const provider = model[5];
-    return { context, output: getProviderMaxOutput(provider) };
-  }
+  const providerKey = getProviderForModel(modelId);
+  const context = PROVIDER_CONTEXT_LIMITS[providerKey] || 128000;
+  // Check synced models for more precise context
   try {
     const { getSyncedModels } = require('./sync');
-    for (const [providerKey] of Object.entries(sources)) {
-      const synced = getSyncedModels(providerKey);
-      const found = synced.find(m => m[0] === modelId);
+    for (const p of Object.keys(require('./sync').PROVIDER_MAP || {})) {
+      const models = getSyncedModels(p);
+      const found = models.find(m => m[0] === modelId || m[0].endsWith('/' + modelId));
       if (found) {
-        return { context: parseCtxWindow(found[4]), output: getProviderMaxOutput(providerKey) };
+        const ctxStr = found[4] || '';
+        const ctxNum = parseInt(ctxStr) || context;
+        return { context: ctxNum, output: Math.min(ctxNum, 16384) };
       }
     }
   } catch {}
-  return { context: 128000, output: 8192 };
+  return { context, output: Math.min(context, 16384) };
 }
 
-function getProviderMaxOutput(provider) {
-  const OUTPUT_LIMITS = {
-    openrouter: 32000, groq: 8192, nvidia: 8192, cerebras: 8192,
-    googleai: 8192, zai: 8192, codestral: 8192,
-    cloudflare: 4096, siliconflow: 4096, huggingface: 4096, ovhcloud: 4096,
-    github: 4096, cohere: 4096, reka: 4096, pollinations: 4096, llm7: 4096,
-  };
-  return OUTPUT_LIMITS[provider] !== undefined ? OUTPUT_LIMITS[provider] : 8192;
-}
-
-module.exports = {
-  sources,
-  MODELS,
-  ENV_VAR_NAMES,
-  TIER_ORDER,
-  getModelsByTier,
-  getModelsByProvider,
-  getProviderForModel,
-  getApiProviders,
-  getModelLimits,
-  parseCtxWindow,
-  isProviderShutdown,
-};
+module.exports = { sources, MODELS, ENV_VAR_NAMES, getModelsByProvider, getModelsByTier, getProviderForModel, isProviderShutdown, getModelLimits, PROVIDER_CONTEXT_LIMITS };

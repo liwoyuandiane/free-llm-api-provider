@@ -25,7 +25,7 @@ const TIER_FALLBACK = {
   'tier-aminus': ['tier-bplus', 'tier-b'],
   'tier-bplus': ['tier-b'],
   'tier-b': ['tier-c'],
-  'tier-c': [],
+  'tier-c': ['tier-b', 'tier-bplus', 'tier-a', 'tier-aplus', 'tier-s'],
 };
 
 // Token estimation (rough: ~4 chars per token for English, ~2 for CJK)
@@ -414,11 +414,15 @@ function getPrioritizedProviders(config, opts = {}) {
             const prefix = key + '/';
             const merged = {};
             for (const m of models) {
-              merged[m[0]] = dbTiers[prefix + m[0]] || m[2] || 'B';
+              merged[m[0]] = dbTiers[prefix + m[0]] || (m[2] && m[2] !== '' ? m[2] : 'B');
             }
             return merged;
           } catch {
-            return Object.fromEntries(models.map(m => [m[0], m[2] || 'B']));
+            const fallback = {};
+            for (const m of models) {
+              fallback[m[0]] = m[2] && m[2] !== '' ? m[2] : 'B';
+            }
+            return fallback;
           }
         })(),
         anthropicFormat: !!provider?.anthropicFormat,
@@ -696,9 +700,12 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
 
   /**
    * model=auto 或 tier-* 模式：使用当前尝试的模型
+   * 否则，去除 provider/ 前缀得到实际模型名
    */
   if (body.model === 'auto' || !body.model || body.model.startsWith('tier-')) {
     body.model = selectedModelId;
+  } else if (body.model.startsWith(provider.key + '/')) {
+    body.model = body.model.slice(provider.key.length + 1);
   }
 
   // Get model limits and sanitize request body (remove Google/Gemini format fields)
@@ -1017,7 +1024,11 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
       }
     }
     if (!resolvedAlias || !providers.length) {
-      throw new Error(`No providers with ${requestedTierAlias} tier models available`);
+      // Last resort: use all non-circuit-broken providers
+      providers = providers.filter(p => !isCircuitOpen(p.key));
+      if (providers.length === 0) {
+        throw new Error(`No providers with ${requestedTierAlias} tier models available`);
+      }
     }
     // Override request model to resolved tier so forwardToProvider filters correctly
     reqBody.model = resolvedAlias;
