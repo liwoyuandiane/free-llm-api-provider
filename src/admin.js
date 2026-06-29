@@ -2500,44 +2500,50 @@ async function handleTestProvider(req, res, providerKey) {
     apiKeys = ['']; // Use empty key for no-key providers
   }
 
-  let modelId = getProviderTestModel(providerKey) || DEFAULT_TEST_MODELS[providerKey] || '';
-  if (!modelId) {
-    const models = getModelsByProvider(providerKey);
-    modelId = models.length > 0 ? models[0][0] : '';
+  // Build list of candidate models to try
+  let modelsToTry = [];
+  const configured = getProviderTestModel(providerKey);
+  if (configured) modelsToTry.push(configured);
+  if (DEFAULT_TEST_MODELS[providerKey] && DEFAULT_TEST_MODELS[providerKey] !== configured) {
+    modelsToTry.push(DEFAULT_TEST_MODELS[providerKey]);
   }
-  if (!modelId) {
+  if (modelsToTry.length === 0) {
+    const models = getModelsByProvider(providerKey);
+    if (models.length > 0) modelsToTry.push(models[0][0]);
+  }
+  if (modelsToTry.length === 0) {
     return jsonResponse(res, 200, { success: false, error: 'No test model configured for this provider' });
   }
 
-  const t0 = performance.now();
+  let lastError = '';
+  for (const modelId of modelsToTry) {
+    const t0 = performance.now();
+    try {
+      const resp = await proxyFetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKeys[0]}`,
+        },
+        body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
+        signal: AbortSignal.timeout(15000),
+      });
 
-  try {
-    const resp = await proxyFetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKeys[0]}`,
-      },
-      body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
-      signal: AbortSignal.timeout(15000),
-    });
-
-    const ms = Math.round(performance.now() - t0);
-    // Trigger health check in background so status shows in UI
-    runHealthCheck(config).catch(() => {});
-    
-    if (resp.ok || resp.status === 429) {
-      return jsonResponse(res, 200, { success: true, latency: ms, status: resp.status });
+      const ms = Math.round(performance.now() - t0);
+      runHealthCheck(config).catch(() => {});
+      
+      if (resp.ok || resp.status === 429) {
+        return jsonResponse(res, 200, { success: true, latency: ms, status: resp.status });
+      }
+      // 404/400 = 模型不存在，尝试下一个
+      lastError = `模型 '${modelId}' 不可用 (HTTP ${resp.status})`;
+    } catch (err) {
+      runHealthCheck(config).catch(() => {});
+      lastError = err.message;
     }
-    // Try to get response body for better error diagnosis
-    let errBody = '';
-    try { errBody = await resp.text(); } catch {}
-    const errMsg = errBody ? (errBody.length > 200 ? errBody.substring(0, 200) + '...' : errBody) : `HTTP ${resp.status}`;
-    return jsonResponse(res, 200, { success: false, error: errMsg, latency: ms });
-  } catch (err) {
-    runHealthCheck(config).catch(() => {});
-    return jsonResponse(res, 200, { success: false, error: err.message, latency: Math.round(performance.now() - t0) });
   }
+  // 所有模型都失败
+  return jsonResponse(res, 200, { success: false, error: lastError, note: '尝试了 ' + modelsToTry.length + ' 个测试模型' });
 }
 
 async function handleDiscoverModels(req, res, providerKey) {
