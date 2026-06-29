@@ -153,7 +153,6 @@ async function discoverProviderModels(providerKey, apiKey) {
   const provider = sources[providerKey];
   let url = provider ? provider.url : null;
   if (!url) {
-    // Check custom providers
     const cp = getCustomProviders().find(p => p.name === providerKey);
     if (cp) url = cp.base_url;
   }
@@ -164,28 +163,30 @@ async function discoverProviderModels(providerKey, apiKey) {
   const modelsUrl = baseUrl + '/models';
 
   try {
-    const resp = await fetch(modelsUrl, {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      signal: AbortSignal.timeout(10000),
-    });
+    const headers = { 'Content-Type': 'application/json' };
+    if (apiKey) headers.Authorization = 'Bearer ' + apiKey;
 
-    if (!resp.ok) return [];
+    const resp = await fetch(modelsUrl, { headers, signal: AbortSignal.timeout(10000) });
+
+    if (!resp.ok) {
+      console.warn('[Admin] Discover ' + providerKey + ': HTTP ' + resp.status);
+      return [];
+    }
 
     const data = await resp.json();
-    const list = (data.data || []).map(m => ({
-      id: m.id,
-      owned_by: m.owned_by || providerKey,
+    // Handle both { data: [...] } and plain array formats
+    const list = Array.isArray(data) ? data : (data.data || data.models || []);
+    const models = list.map(m => ({
+      id: typeof m === 'string' ? m : (m.id || m.model_id || ''),
+      owned_by: m.owned_by || m.provider || providerKey,
       object: m.object || 'model',
       discoveredAt: Date.now(),
-    }));
+    })).filter(m => m.id);
 
-    if (list.length > 0) {
-      saveDiscoveredModels(providerKey, list);
+    if (models.length > 0) {
+      saveDiscoveredModels(providerKey, models);
     }
-    return list;
+    return models;
   } catch (err) {
     console.warn('[Admin] Discover models failed for ' + providerKey + ':', err.message);
     return [];
@@ -491,8 +492,8 @@ tr:hover td{background:var(--card-hover)}
         <div id="providerList"><div class="load" style="margin:18px auto"></div></div>
       </div>
       <div class="c">
-        <div class="ch"><span class="ct">提供商优先级</span><button class="btn btn-p btn-sm" id="savePPBtn" onclick="savePP()" style="display:none">保存优先级</button></div>
-        <p style="font-size:14px;color:var(--dim);margin-bottom:10px">数字越小优先级越高（0 = 最高）。相同模型时优先使用高优先级提供商。</p>
+        <div class="ch"><span class="ct">提供商优先级</span><button class="btn btn-p btn-sm" id="savePPBtn" onclick="savePP()" style="display:none">保存排序</button></div>
+        <p style="font-size:14px;color:var(--dim);margin-bottom:10px">拖拽排序，越靠上优先级越高。相同模型时优先使用高优先级提供商。</p>
         <div id="priorityList"><div class="load" style="margin:8px 0"></div></div>
       </div>
       <div class="c">
@@ -830,7 +831,7 @@ async function rP() {
  */
 async function togP(k,e){await api('/config',{method:'PUT',body:{toggleProvider:{key:k,enabled:e}}});t((e?'启用':'禁用')+' '+k);}
 /**
- * rPP — 渲染提供商优先级列表
+ * rPP — 渲染提供商优先级列表（拖拽排序）
  */
 const _pendingPriorities={};
 async function rPP(){
@@ -842,44 +843,80 @@ async function rPP(){
     const ak=cfg.apiKeys||{};
     const withKeys=pr.filter(p=>{const k=ak[p.key];return Array.isArray(k)&&k.length>0;});
     if(withKeys.length===0){el.innerHTML='<div style="color:var(--dim);font-size:14px">暂无已配置的提供商</div>';return;}
-    el.innerHTML=withKeys.map(p=>{
-      const val=pp[p.key]!==undefined?pp[p.key]:'';
-      return '<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--b2)">'+
-        '<span style="flex:1;font-weight:500">'+esc(p.name)+'</span>'+
-        '<input type="number" min="0" max="999" value="'+val+'" placeholder="默认"'+
-        ' style="width:70px;padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:14px;text-align:center"'+
-        ' onchange="setPP(\\''+jsesc(p.key)+'\\',this.value);this.classList.add(\\'ts-modified\\')"'+
-        ' onkeydown="if(event.key===\\'Enter\\')this.blur()">'+
-        '</div>';
-    }).join('');
+    // Sort by priority (lower number = higher), unset after set
+    withKeys.sort((a,b)=>{
+      const pa=pp[a.key]!==undefined?pp[a.key]:999;
+      const pb=pp[b.key]!==undefined?pp[b.key]:999;
+      return pa-pb;
+    });
+    el.innerHTML=withKeys.map((p,i)=>'<div class="pp-row" draggable="true" data-key="'+jsesc(p.key)+'" data-idx="'+i+
+      '" ondragstart="ppDragStart(event)" ondragover="ppDragOver(event)" ondrop="ppDrop(event)" ondragend="ppDragEnd(event)"'+
+      ' style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--b2);cursor:grab">'+
+      '<span style="color:var(--mut);font-size:16px;cursor:grab;user-select:none">⠿</span>'+
+      '<span style="flex:1;font-weight:500">'+esc(p.name)+'</span>'+
+      '<span style="font-size:12px;color:var(--dim)">#'+(i+1)+'</span>'+
+      '</div>').join('');
+    // Mark as pending if order was changed
+    _applyPendingMark();
   }catch(e){el.innerHTML='<div style="color:var(--red)">加载失败</div>';}
 }
-/**
- * setPP — 记录优先级变更（不立即保存）
- */
-function setPP(k,v){
-  _pendingPriorities[k]=v===''?null:Number(v);
+let _ppDragSrc=null;
+function ppDragStart(e){
+  _ppDragSrc=e.target;
+  e.target.style.opacity='0.4';
+  e.dataTransfer.effectAllowed='move';
+  e.dataTransfer.setData('text/plain',e.target.dataset.key);
+}
+function ppDragOver(e){
+  e.preventDefault();
+  e.dataTransfer.dropEffect='move';
+  const el=e.target.closest('.pp-row');
+  if(el&&el!==_ppDragSrc){el.style.borderBottom='2px solid var(--blue)';}
+}
+function ppDragEnd(e){
+  e.target.style.opacity='1';
+  document.querySelectorAll('.pp-row').forEach(r=>r.style.borderBottom='1px solid var(--b2)');
+  _ppDragSrc=null;
+}
+function ppDrop(e){
+  e.preventDefault();
+  document.querySelectorAll('.pp-row').forEach(r=>r.style.borderBottom='1px solid var(--b2)');
+  const target=e.target.closest('.pp-row');
+  if(!target||target===_ppDragSrc)return;
+  const list=document.getElementById('priorityList');
+  const rows=[...list.querySelectorAll('.pp-row')];
+  const srcIdx=rows.indexOf(_ppDragSrc);
+  const tgtIdx=rows.indexOf(target);
+  if(srcIdx<tgtIdx)target.after(_ppDragSrc);
+  else target.before(_ppDragSrc);
+  // Re-number and mark pending
+  rows.forEach((r,i)=>{const n=r.querySelector('span:last-child');if(n)n.textContent='#'+(i+1);});
+  _markPending();
+}
+function _markPending(){
   const btn=document.getElementById('savePPBtn');
   if(btn)btn.style.display='';
 }
+function _applyPendingMark(){
+  // Placeholder — marks are applied on save
+}
 /**
- * savePP — 批量保存优先级变更
+ * savePP — 保存拖拽排序后的优先级
  */
 async function savePP(){
-  const entries=Object.entries(_pendingPriorities);
-  if(entries.length===0)return;
+  const rows=[...document.querySelectorAll('#priorityList .pp-row')];
+  if(rows.length===0)return;
   let ok=0;
-  for(const [k,v] of entries){
-    if(v===null){await api('/provider-priority',{method:'DELETE',body:{provider:k}});}
-    else{await api('/provider-priority',{method:'POST',body:{provider:k,priority:v}});}
+  for(let i=0;i<rows.length;i++){
+    const key=rows[i].dataset.key;
+    // Clear existing priority, then set new based on position
+    await api('/provider-priority',{method:'DELETE',body:{provider:key}});
+    await api('/provider-priority',{method:'POST',body:{provider:key,priority:i}});
     ok++;
   }
-  // 移除已修改标记
-  document.querySelectorAll('#priorityList .ts-modified').forEach(el=>el.classList.remove('ts-modified'));
-  for(const k of Object.keys(_pendingPriorities))delete _pendingPriorities[k];
   const btn=document.getElementById('savePPBtn');
   if(btn)btn.style.display='none';
-  t('优先级已保存: '+ok+' 个');
+  t('排序已保存: '+ok+' 个提供商');
 }
 /**
  * tP — 测试提供商连接
@@ -2314,7 +2351,12 @@ async function handleTestProvider(req, res, providerKey) {
   }
 
   if (apiKeys.length === 0) {
-    return jsonResponse(res, 400, { error: 'No API key configured' });
+    const source = sources[providerKey];
+    // Allow no-key providers (LLM7, Pollinations, etc.)
+    if (!source || !source.noKeyRequired) {
+      return jsonResponse(res, 400, { error: 'No API key configured' });
+    }
+    apiKeys = ['']; // Use empty key for no-key providers
   }
 
   let modelId = getProviderTestModel(providerKey) || DEFAULT_TEST_MODELS[providerKey] || '';
@@ -2369,7 +2411,11 @@ async function handleDiscoverModels(req, res, providerKey) {
     if (keys.length > 0) apiKey = keys[0];
   }
 
-  if (!apiKey) return jsonResponse(res, 200, { models: [] });
+  if (!apiKey) {
+    const src = sources[providerKey];
+    if (!src || !src.noKeyRequired) return jsonResponse(res, 200, { models: [] });
+    // Allow no-key providers (LLM7, Pollinations, Kilo Gateway, AI Horde)
+  }
 
   const models = await discoverProviderModels(realProviderKey, apiKey);
   // Auto-assign tiers to newly discovered models
