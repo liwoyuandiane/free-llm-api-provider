@@ -1061,6 +1061,18 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
   
   // 2. If chosen from sticky/active, try it first
   if (chosenProvider) {
+    // Context handoff: if provider changed from previous session, inject handoff message
+    if (sessionId && process.env.FLAP_CONTEXT_HANDOFF === 'true') {
+      const prevSticky = getStickyProvider(sessionId);
+      if (prevSticky && prevSticky.key !== chosenProvider.key) {
+        const handoffMsg = {
+          role: 'system',
+          content: `[Context Handoff]\nYou are continuing a conversation that was started with another model (${prevSticky.key}). Continue the user's task using the conversation context provided in this request. Do not restart the task or re-ask already answered questions.\n[/Context Handoff]`
+        };
+        reqBody.messages = [handoffMsg, ...(reqBody.messages || [])];
+        console.log(`[Proxy] Context handoff: ${prevSticky.key} → ${chosenProvider.key}`);
+      }
+    }
     try {
       console.log(`[Proxy] Using ${sessionId ? 'sticky' : 'active'} provider: ${chosenProvider.key}`);
       const result = await forwardToProvider(chosenProvider, reqBody, onStreamChunk);
