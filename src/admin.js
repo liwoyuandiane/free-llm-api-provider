@@ -2417,28 +2417,46 @@ const DEFAULT_TEST_MODELS = {
 };
 
 async function runKeyTest(res, url, provider, apiKey) {
-  let modelId = getProviderTestModel(provider) || DEFAULT_TEST_MODELS[provider] || '';
-  // Fallback: use first model from provider's model list
-  if (!modelId) {
-    const models = getModelsByProvider(provider);
-    modelId = models.length > 0 ? models[0][0] : '';
+  // Build a list of candidate models to try
+  const modelsToTry = [];
+  const configured = getProviderTestModel(provider);
+  if (configured) modelsToTry.push(configured);
+  if (DEFAULT_TEST_MODELS[provider] && DEFAULT_TEST_MODELS[provider] !== configured) {
+    modelsToTry.push(DEFAULT_TEST_MODELS[provider]);
   }
-  if (!modelId) {
+  // Fallback: first model from provider's model list
+  if (modelsToTry.length === 0) {
+    const models = getModelsByProvider(provider);
+    if (models.length > 0) modelsToTry.push(models[0][0]);
+  }
+  if (modelsToTry.length === 0) {
     return jsonResponse(res, 200, { success: false, error: 'No test model configured for this provider' });
   }
-  const t0 = performance.now();
-  try {
-    const resp = await proxyFetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
-      signal: AbortSignal.timeout(15000),
+  
+  let lastError = '';
+  for (const modelId of modelsToTry) {
+    const t0 = performance.now();
+    try {
+      const resp = await proxyFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
+        signal: AbortSignal.timeout(15000),
     });
     const ms = Math.round(performance.now() - t0);
-    jsonResponse(res, 200, { success: resp.ok || resp.status === 429, latency: ms, status: resp.status });
+    if (resp.ok) {
+      return jsonResponse(res, 200, { success: true, latency: ms, status: resp.status });
+    } else if (resp.status === 429) {
+      return jsonResponse(res, 200, { success: true, latency: ms, status: 429, note: '限流但 Key 有效' });
+    }
+    // 404/400 = 模型不存在，尝试下一个
+    lastError = `模型 '${modelId}' 不可用 (HTTP ${resp.status})`;
   } catch (err) {
-    jsonResponse(res, 200, { success: false, error: err.message, latency: Math.round(performance.now() - t0) });
+    lastError = err.message;
   }
+  }
+  // 所有模型都失败
+  jsonResponse(res, 200, { success: false, error: lastError, note: '尝试了 ' + modelsToTry.length + ' 个测试模型' });
 }
 
 async function handleRegenerateKey(res) {
