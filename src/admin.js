@@ -437,6 +437,24 @@ tr:hover td{background:var(--card-hover)}
 .stat-card .lbl{font-size:var(--font-xs);color:var(--text-muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;font-weight:600}
 .stat-card .val{font-size:24px;font-weight:700;color:var(--text)}
 
+/* ── Charts (pure CSS bar charts) ── */
+.chart-wrap{margin-top:6px}
+.chart-row{display:flex;align-items:center;gap:10px;margin-bottom:6px;font-size:var(--font-sm)}
+.chart-lbl{min-width:80px;color:var(--text-secondary);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chart-bar-bg{flex:1;height:22px;background:var(--bg-subtle);border-radius:4px;overflow:hidden;position:relative}
+.chart-bar{height:100%;border-radius:4px;transition:width .6s cubic-bezier(.4,0,.2,1);min-width:2px;display:flex;align-items:center;padding-left:8px;font-size:11px;color:#fff;font-weight:600}
+.chart-bar.good{background:linear-gradient(90deg,var(--success),#4ade80)}
+.chart-bar.ok{background:linear-gradient(90deg,var(--warning),#facc15)}
+.chart-bar.bad{background:linear-gradient(90deg,var(--danger),#f87171)}
+.chart-bar.neutral{background:linear-gradient(90deg,var(--accent),#60a5fa)}
+.chart-bar-idle{background:var(--border)}
+
+/* ── Search bar ── */
+.sb{position:relative;margin-bottom:14px}
+.sb input{width:100%;padding:9px 13px 9px 36px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-subtle);color:var(--text);font-size:var(--font-base);transition:var(--transition)}
+.sb input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-bg);outline:none}
+.sb::before{content:'🔍';position:absolute;left:11px;top:50%;transform:translateY(-50%);font-size:14px;opacity:.5;pointer-events:none}
+
 /* ── Toast ── */
 .toast{position:fixed;bottom:20px;right:20px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 20px;font-size:var(--font-base);box-shadow:var(--shadow-lg);z-index:100;display:none;max-width:380px;animation:toastIn .2s ease}
 @keyframes toastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
@@ -1321,14 +1339,22 @@ async function rS(){
   try{
     const r=await fetch('/stats');const d=await r.json();
     const total=d.total_requests||0,succ=d.successful_requests||0,fail=d.failed_requests||0,rate=total>0?Math.round(succ/total*100):0;
-    const usage=d.provider_usage||{};
-    el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-bottom:12px">'+
-      '<div class="hc"><div class="st">总请求</div><div style="font-size:22px;font-weight:700">'+total+'</div></div>'+
-      '<div class="hc"><div class="st">成功</div><div style="font-size:22px;font-weight:700;color:var(--green)">'+succ+'</div></div>'+
-      '<div class="hc"><div class="st">失败</div><div style="font-size:22px;font-weight:700;color:var(--red)">'+fail+'</div></div>'+
-      '<div class="hc"><div class="st">成功率</div><div style="font-size:22px;font-weight:700;color:'+(rate>=80?'var(--green)':(rate>=50?'var(--yellow)':'var(--red)'))+'">'+rate+'%</div></div>'+
-    '</div>'+
-    (Object.keys(usage).length?'<table><thead><tr><th>提供商</th><th>使用次数</th></tr></thead><tbody>'+Object.entries(usage).map(([k,v])=>'<tr><td>'+esc(k)+'</td><td>'+v+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">暂无使用数据</div>');
+    const usage=d.provider_usage||{},errors=d.errors||{};
+    const maxUsage=Math.max(1,...Object.values(usage));
+    el.innerHTML=
+      '<div class="stat-grid">'+
+        '<div class="stat-card"><div class="lbl">总请求</div><div class="val" style="color:var(--text)">'+total+'</div></div>'+
+        '<div class="stat-card"><div class="lbl">成功</div><div class="val" style="color:var(--success)">'+succ+'</div></div>'+
+        '<div class="stat-card"><div class="lbl">失败</div><div class="val" style="color:var(--danger)">'+fail+'</div></div>'+
+        '<div class="stat-card"><div class="lbl">成功率</div><div class="val" style="color:'+(rate>=80?'var(--success)':(rate>=50?'var(--warning)':'var(--danger)'))+'">'+rate+'%</div></div>'+
+      '</div>'+
+      (Object.keys(usage).length?'<div class="ch" style="margin-bottom:8px"><span class="ct">提供商使用分布</span></div><div class="chart-wrap">'+
+        Object.entries(usage).sort((a,b)=>b[1]-a[1]).slice(0,15).map(([k,v])=>{
+          const pct=Math.round(v/maxUsage*100);
+          const barCls=pct>=80?'good':pct>=50?'ok':pct>=20?'neutral':'chart-bar-idle';
+          return '<div class="chart-row"><span class="chart-lbl" title="'+esc(k)+'">'+esc(k)+'</span><div class="chart-bar-bg"><div class="chart-bar '+barCls+'" style="width:'+pct+'%">'+(v>0?v:'')+'</div></div></div>';
+        }).join('')+
+      '</div>':'<div class="empty">暂无使用数据</div>');
   }catch(e){el.innerHTML='<div class="empty">无法获取统计: '+esc(e.message)+'</div>';}
 }
 
