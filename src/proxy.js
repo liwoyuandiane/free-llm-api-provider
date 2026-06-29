@@ -15,6 +15,18 @@ const { validateSession } = require('./db');
 
 const TIER_ALIAS_MAP = { 'tier-splus': 'S+', 'tier-s': 'S', 'tier-aplus': 'A+', 'tier-a': 'A', 'tier-aminus': 'A-', 'tier-bplus': 'B+', 'tier-b': 'B', 'tier-c': 'C' };
 
+// Tier fallback chain: if exact tier not available, try the next lower tier
+const TIER_FALLBACK = {
+  'tier-splus': ['tier-s', 'tier-aplus', 'tier-a', 'tier-bplus', 'tier-b'],
+  'tier-s': ['tier-aplus', 'tier-a', 'tier-bplus', 'tier-b'],
+  'tier-aplus': ['tier-a', 'tier-bplus', 'tier-b'],
+  'tier-a': ['tier-bplus', 'tier-b'],
+  'tier-aminus': ['tier-bplus', 'tier-b'],
+  'tier-bplus': ['tier-b'],
+  'tier-b': ['tier-c'],
+  'tier-c': [],
+};
+
 // Token estimation (rough: ~4 chars per token for English, ~2 for CJK)
 function isStreaming(body) {
   return body.stream === true || body.stream === 'true' || body.stream === 1;
@@ -885,6 +897,28 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
   
   // Clean up old rate limit data periodically
   cleanRateLimits();
+
+  // Filter providers based on tier-* request with fallback chain
+  const requestedTierAlias = reqBody.model && TIER_ALIAS_MAP[reqBody.model];
+  if (requestedTierAlias) {
+    // Try exact tier, then fallback chain (e.g. A+ → A → B+ → B)
+    const tiersToTry = [reqBody.model, ...(TIER_FALLBACK[reqBody.model] || [])];
+    let resolvedAlias = null;
+    for (const tierAlias of tiersToTry) {
+      const tier = TIER_ALIAS_MAP[tierAlias];
+      const matching = providers.filter(p => p.models.some(mid => p.modelTiers?.[mid] === tier));
+      if (matching.length > 0) {
+        providers = matching;
+        resolvedAlias = tierAlias;
+        break;
+      }
+    }
+    if (!resolvedAlias || !providers.length) {
+      throw new Error(`No providers with ${requestedTierAlias} tier models available`);
+    }
+    // Override request model to resolved tier so forwardToProvider filters correctly
+    reqBody.model = resolvedAlias;
+  }
   
   const errors = [];
   let chosenProvider = null;

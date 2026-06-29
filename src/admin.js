@@ -1451,11 +1451,9 @@ async function startAutoTier(){
   const r=await api('/auto-tier',{method:'POST'});
   if(r.error){t(r.error,'err');btn.disabled=false;btn.textContent='自动定级';return;}
   if(!r.running){
-    // 没有模型需要定级
-    const alreadyMsg = r.alreadyTiered ? '（其中 '+r.alreadyTiered+' 个已有分级）' : '';
-    document.getElementById('autoTierStatus').textContent=r.message||'完成'+alreadyMsg;
+    document.getElementById('autoTierStatus').textContent=r.message||'完成';
     document.getElementById('autoTierBar').style.width='100%';
-    document.getElementById('autoTierCounts').textContent='✅ 无需定级';
+    document.getElementById('autoTierCounts').textContent='无模型可定级';
     btn.disabled=false;btn.textContent='自动定级';
     return;
   }
@@ -1467,8 +1465,7 @@ async function pollAutoTierProgress(){
   const total=r.total||1;
   const pct=Math.round((r.completed/total)*100);
   document.getElementById('autoTierBar').style.width=pct+'%';
-  const alreadyStr = r.alreadyTiered ? ' · 📋 '+r.alreadyTiered+' 个已有分级' : '';
-  document.getElementById('autoTierCounts').textContent='✅ '+r.ok+' 个可用·❌ '+r.fail+' 个不可用'+(r.skip>0?'·⏭ '+r.skip+' 个跳过':'')+alreadyStr+'·⏳ '+(total-r.completed)+' 个待测';
+  document.getElementById('autoTierCounts').textContent='✅ '+r.ok+' 个已定级'+(r.fail>0?' ❌ '+r.fail+' 个失败':'')+' ⏳ '+(total-r.completed)+' 个待定级';
   document.getElementById('autoTierStatus').textContent=r.current||('进度: '+r.completed+'/'+total);
   if(r.running){
     _autoTierPollTimer=setTimeout(pollAutoTierProgress,800);
@@ -1530,27 +1527,14 @@ setInterval(() => {
 document.addEventListener('keydown',e=>{if(e.key==='Escape')cDM();});
 </script>
 
-<!-- 修改密码弹窗（默认密码登录后强制显示） -->
+<!-- 修改密码提醒弹窗（默认密码登录后显示） -->
 <div id="changePwModal" class="modal-o">
   <div class="modal" style="min-width:380px;max-width:420px">
     <h3>⚠️ 请修改默认密码</h3>
-    <p style="color:var(--text-secondary);margin-bottom:18px;font-size:var(--font-sm)">您正在使用默认密码登录，为了安全请立即修改。</p>
-    <div style="margin-bottom:10px">
-      <label style="font-size:var(--font-sm);color:var(--dim);display:block;margin-bottom:4px">当前密码</label>
-      <input id="cpwCur" type="password" value="admin123" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:var(--font-base)">
-    </div>
-    <div style="margin-bottom:10px">
-      <label style="font-size:var(--font-sm);color:var(--dim);display:block;margin-bottom:4px">新密码（至少 6 位）</label>
-      <input id="cpwNew" type="password" placeholder="输入新密码" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:var(--font-base)">
-    </div>
-    <div style="margin-bottom:18px">
-      <label style="font-size:var(--font-sm);color:var(--dim);display:block;margin-bottom:4px">确认新密码</label>
-      <input id="cpwConfirm" type="password" placeholder="再次输入新密码" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:var(--font-base)">
-    </div>
-    <div id="cpwErr" style="color:var(--red);font-size:var(--font-sm);margin-bottom:12px;display:none"></div>
+    <p style="color:var(--text-secondary);margin-bottom:18px;font-size:var(--font-sm)">您正在使用默认密码登录，为了安全请前往设置页修改密码。</p>
     <div style="display:flex;gap:10px;justify-content:flex-end">
       <button onclick="closeChangePwModal()" class="btn">稍后再说</button>
-      <button onclick="doChangeDefaultPw()" class="btn btn-p">确认修改</button>
+      <button onclick="goChangePw()" class="btn btn-p">前往设置修改</button>
     </div>
   </div>
 </div>
@@ -1560,28 +1544,10 @@ if(initData.isDefaultPassword){
   document.getElementById('changePwModal').classList.add('show');
 }
 function closeChangePwModal(){document.getElementById('changePwModal').classList.remove('show');}
-async function doChangeDefaultPw(){
-  const cur=document.getElementById('cpwCur').value;
-  const pw=document.getElementById('cpwNew').value;
-  const cf=document.getElementById('cpwConfirm').value;
-  const errEl=document.getElementById('cpwErr');
-  errEl.style.display='none';
-  if(!pw||pw.length<6){errEl.textContent='新密码至少 6 位';errEl.style.display='block';return;}
-  if(pw===cur){errEl.textContent='新密码不能与默认密码相同';errEl.style.display='block';return;}
-  if(pw!==cf){errEl.textContent='两次输入的密码不一致';errEl.style.display='block';return;}
-  const r=await fetch('/api/admin/change-password',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({currentPassword:cur,newPassword:pw})});
-  const d=await r.json();
-  if(d.success){
-    document.getElementById('changePwModal').classList.remove('show');
-    initData.isDefaultPassword=false;
-    history.replaceState(null,'',location.pathname);
-  }else{
-    errEl.textContent=d.error||'修改失败';errEl.style.display='block';
-  }
+function goChangePw(){
+  document.getElementById('changePwModal').classList.remove('show');
+  sp('settings');
 }
-// 回车提交
-document.getElementById('cpwNew').addEventListener('keydown',e=>{if(e.key==='Enter')doChangeDefaultPw();});
-document.getElementById('cpwConfirm').addEventListener('keydown',e=>{if(e.key==='Enter')doChangeDefaultPw();});
 </script>
 </body>
 </html>`;
@@ -1989,24 +1955,31 @@ let _autoTierState = { running: false, total: 0, completed: 0, ok: 0, fail: 0, c
 function inferTierFromModelName(modelId) {
   const lowerId = modelId.toLowerCase();
   const namePart = modelId.split('/').pop()?.toLowerCase() || '';
+  // A+ for frontier small/cheap models
+  if (/gpt-4o-mini|claude.*haiku|gemini.*flash|deepseek.*lite|qwen.*turbo/.test(lowerId)) return 'A+';
+  // S+ tier (frontier large)
   if (/claude.*(?:opus|sonnet|4)/.test(lowerId) ||
       /gpt-4(?:o|\.)?(?!.*mini)/.test(lowerId) ||
       /gemini.*(?:ultra|2\.(?:0|5)|pro)/.test(lowerId) ||
-      /deepseek.*(?:v3|r1)/.test(lowerId) ||
+      /deepseek.*(?:v3|r1|v4)/.test(lowerId) ||
       /qwen.*(?:3|max|plus|480|235)/.test(lowerId) ||
       /kimi.*(?:k2|k2\.5|k2\.6)/.test(lowerId)) {
     if (/mini|tiny|small|nano/.test(namePart)) return 'A+';
     if (/flash|lite|fast/.test(namePart)) return 'A';
     return 'S+';
   }
+  // S tier (excellent, not frontier)
   if (/claude|gpt-4|gemini|deepseek|qwen|kimi|mistral-large|llama.*(?:70|90|405|maverick)/.test(lowerId) ||
       /nemotron.*super|command.*r\b/.test(lowerId)) return 'S';
+  // A tier (solid performers)
   if (/llama|mistral|mixtral|qwen|glm|phi-3|command|gemma.*(?:2|27)/.test(lowerId)) {
     if (/mini|tiny|small|nano/.test(namePart)) return 'B+';
+    if (/flash|lite|fast/.test(namePart)) return 'A';
     return 'A';
   }
+  // B+ tier
   if (/gemma|phi|granite|falcon|dbrx|solar|aya/.test(lowerId)) return 'B+';
-  return 'B'; // 模型测试可用但无模式匹配 → 默认 B
+  return 'B'; // 默认 B
 }
 
 async function handleAutoTier(req, res) {
@@ -2014,114 +1987,68 @@ async function handleAutoTier(req, res) {
     return jsonResponse(res, 200, { running: true, message: '已在运行中' });
   }
 
-  const config = loadConfig();
-
-  // Count models already tiered
   const userTiers = getAllModelTiers();
-  let alreadyTiered = 0;
+  const toGrade = [];
 
-  // Collect all ungraded models (no tier in model_tiers) from providers WITH keys
-  const allModels = {};
-
-  // Static models without tier
+  // Collect ALL models (both static and discovered) — always re-grade all models
   for (const m of MODELS) {
     const provider = m[5];
     const modelId = m[0];
     if (!provider || !sources[provider]?.url) continue;
     if (!modelId) continue;
-    const key = provider + '/' + modelId;
-    if (userTiers[key]) { alreadyTiered++; continue; }
-    // Skip providers without API keys
-    if (!sources[provider]?.noKeyRequired) {
-      const pKeys = getAllApiKeys(config, provider);
-      if (pKeys.length === 0) continue;
-    }
-    if (!allModels[provider]) allModels[provider] = [];
-    allModels[provider].push({ modelId, label: m[1] || modelId });
+    toGrade.push({ modelId, provider, label: m[1] || modelId });
   }
 
-  // Discovered models without tier
   try {
     const discovered = getAllDiscoveredModels();
     for (const dm of discovered) {
-      if (!dm.model_id) continue;
-      const key = dm.provider + '/' + dm.model_id;
-      if (userTiers[key]) { alreadyTiered++; continue; }
-      if (!allModels[dm.provider]) allModels[dm.provider] = [];
-      // Skip providers without API keys
-      if (!sources[dm.provider]?.noKeyRequired) {
-        const pKeys = getAllApiKeys(config, dm.provider);
-        if (pKeys.length === 0) continue;
-      }
-      // Avoid duplicates
-      if (!allModels[dm.provider].find(m => m.modelId === dm.model_id)) {
-        allModels[dm.provider].push({ modelId: dm.model_id, label: dm.model_id, discovered: true });
+      if (!dm.model_id || !dm.provider) continue;
+      if (!toGrade.find(m => m.modelId === dm.model_id && m.provider === dm.provider)) {
+        toGrade.push({ modelId: dm.model_id, provider: dm.provider, label: dm.model_id });
       }
     }
   } catch {}
 
-  const totalModels = Object.values(allModels).reduce((s, v) => s + v.length, 0);
-  if (totalModels === 0) {
-    const msg = alreadyTiered > 0 ? `所有 ${alreadyTiered} 个模型已有分级，无需定级` : '没有未定级的模型';
-    return jsonResponse(res, 200, { running: false, message: msg, alreadyTiered });
+  if (toGrade.length === 0) {
+    return jsonResponse(res, 200, { running: false, message: '没有模型需要定级' });
   }
 
-  _autoTierState = { running: true, total: totalModels, completed: 0, ok: 0, fail: 0, skip: 0, current: '', alreadyTiered };
+  _autoTierState = { running: true, total: toGrade.length, completed: 0, ok: 0, fail: 0, skip: 0, current: '' };
 
   // Start background process
-  runAutoTierBackground(config, allModels).catch(() => {});
+  runAutoTierBackground(toGrade).catch(() => {});
 
-  jsonResponse(res, 200, { running: true, total: totalModels, alreadyTiered });
+  jsonResponse(res, 200, { running: true, total: toGrade.length });
 }
 
-async function runAutoTierBackground(config, allModels) {
-  const providerEntries = Object.entries(allModels);
-
-  await Promise.all(providerEntries.map(([provider, models]) =>
-    (async () => {
-      try {
-        await runAutoTierForProvider(config, provider, models);
-      } catch (e) {
-        console.warn('[AutoTier] Provider ' + provider + ' error:', e.message);
-      }
-    })()
-  ));
-
-  _autoTierState.running = false;
-  _autoTierState.current = '定级完成';
-}
-
-async function runAutoTierForProvider(config, provider, models) {
-  const source = sources[provider];
-  if (!source || !source.url) return;
-
-  // Get API key — only needed to confirm provider is configured (skip if no key)
-  if (!source.noKeyRequired) {
-    const keys = getAllApiKeys(config, provider);
-    if (keys.length === 0) return;
-  }
-
-  // Assign tiers without API testing — use model name pattern matching
-  for (let i = 0; i < models.length; i++) {
-    const model = models[i];
-    if (!model || !model.modelId) {
+async function runAutoTierBackground(toGrade) {
+  // Process all models using pattern-based name matching (no API calls needed)
+  for (let i = 0; i < toGrade.length; i++) {
+    const m = toGrade[i];
+    if (!m || !m.modelId) {
       _autoTierState.skip++;
       _autoTierState.completed++;
       continue;
     }
-    _autoTierState.current = provider + ' → ' + (model.label || model.modelId);
+
+    _autoTierState.current = m.provider + ' → ' + (m.label || m.modelId);
 
     try {
-      const tier = inferTierFromModelName(model.modelId);
-      setModelTier(model.modelId, provider, tier);
+      const tier = inferTierFromModelName(m.modelId);
+      setModelTier(m.modelId, m.provider, tier);
       _autoTierState.ok++;
     } catch (e) {
       _autoTierState.fail++;
-      console.warn('[AutoTier] Error grading ' + model.modelId + ':', e.message);
     }
 
     _autoTierState.completed++;
+
+    // Yield to event loop every 10 models
+    if (i % 10 === 9) await new Promise(r => setImmediate(r));
   }
+
+  _autoTierState.running = false;
+  _autoTierState.current = '定级完成';
 }
 
 function handleAutoTierStatus(res) {
