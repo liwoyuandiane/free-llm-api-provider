@@ -314,6 +314,13 @@ function createTables() {
   `);
   // 迁移：为已有数据库添加 is_default_pw 列
   try { db.exec('ALTER TABLE admin_users ADD COLUMN is_default_pw INTEGER NOT NULL DEFAULT 0'); } catch {}
+  // 迁移：修复现有用户 — 如果密码仍是默认密码则标记 is_default_pw = 1
+  try {
+    const admin = db.prepare('SELECT username, password_hash FROM admin_users LIMIT 1').get();
+    if (admin && !admin.is_default_pw && verifyPassword(DEFAULT_ADMIN_PASSWORD, admin.password_hash)) {
+      db.prepare('UPDATE admin_users SET is_default_pw = 1 WHERE username = ?').run(admin.username);
+    }
+  } catch {}
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -1082,43 +1089,6 @@ function applyTiersToDiscoveredModels() {
     for (const dm of discovered) {
       const key = dm.provider + '/' + dm.model_id;
       let tier = exactTiers[key];
-
-      // Fallback: pattern-based tier for exact model name match
-      if (!tier) {
-        const lowerId = dm.model_id.toLowerCase();
-        const namePart = dm.model_id.split('/').pop()?.toLowerCase() || '';
-
-        // S+ tier
-        if (/claude.*(?:opus|sonnet|4)/.test(lowerId) ||
-            /gpt-4(?:o|\.)?(?!.*mini)/.test(lowerId) ||
-            /gemini.*(?:ultra|2\.(?:0|5)|pro)/.test(lowerId) ||
-            /deepseek.*(?:v3|r1)/.test(lowerId) ||
-            /qwen.*(?:3|max|plus|480|235)/.test(lowerId) ||
-            /kimi.*(?:k2|k2\.5|k2\.6)/.test(lowerId)) {
-          if (/mini|tiny|small|nano/.test(namePart)) tier = 'A+';
-          else if (/flash|lite|fast/.test(namePart)) tier = 'A';
-          else tier = 'S+';
-        }
-        // S tier
-        else if (/claude|gpt-4|gemini|deepseek|qwen|kimi|mistral-large|llama.*(?:70|90|405|maverick)/.test(lowerId) ||
-                 /nemotron.*super|command.*r\b/.test(lowerId)) {
-          tier = 'S';
-        }
-        // A+ or A tier
-        else if (/llama|mistral|mixtral|qwen|glm|phi-3|command|gemma.*(?:2|27)/.test(lowerId)) {
-          if (/mini|tiny|small|nano/.test(namePart)) tier = 'B+';
-          else tier = 'A';
-        }
-        // B+ tier
-        else if (/gemma|phi|granite|falcon|dbrx|solar|aya/.test(lowerId)) {
-          tier = 'B+';
-        }
-        // 不匹配已知模式 → 保持未分级
-        // (不由 applyTiersToDiscoveredModels 分配，交给用户手动或 auto-tier 按钮处理)
-        else {
-          // skip
-        }
-      }
 
       if (tier) {
         try {

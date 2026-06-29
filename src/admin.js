@@ -132,9 +132,10 @@ function getAdminInitialData() {
     try { const tm = getProviderTestModel(k); if (tm) testModels[k] = tm; } catch {}
   }
   const adminUsername = getAdminUsername();
+  const isDefaultPassword = isUsingDefaultPassword(adminUsername);
   // 只返回脱敏的 server API key，完整 key 通过 /api/admin/server-key 获取
   const maskedServerKey = serverApiKey ? serverApiKey.slice(0, 8) + '...' + serverApiKey.slice(-4) : '(not configured)';
-  return { serverApiKey: maskedServerKey, allProviders, enabledProviders, apiKeys, testModels, adminUsername };
+  return { serverApiKey: maskedServerKey, allProviders, enabledProviders, apiKeys, testModels, adminUsername, isDefaultPassword };
 }
 
 // ============================================================================
@@ -527,7 +528,7 @@ tr:hover td{background:var(--card-hover)}
         </div>
         <div style="margin-bottom:12px"><input type="text" id="modelSearch" placeholder="搜索模型名称或提供商..." oninput="filterModels(this.value)" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:var(--font-base)"></div>
         <div style="overflow-x:auto">
-        <table><thead><tr><th style="width:34px">启用</th><th>模型 ID</th><th>名称</th><th style="width:85px">等级</th><th>提供商</th><th style="width:50px">来源</th></tr></thead>
+        <table><thead><tr><th style="width:34px">启用</th><th>模型 ID</th><th>名称</th><th style="width:85px">等级</th><th>提供商</th></tr></thead>
         <tbody id="mtb"></tbody></table>
         </div>
       </div>
@@ -614,7 +615,7 @@ tr:hover td{background:var(--card-hover)}
       </div>
       <div class="c">
         <div class="ct" style="margin-bottom:4px">SWE-bench 评分同步</div>
-        <p style="font-size:14px;color:var(--dim);margin-bottom:10px">设置一个 JSON URL 来自动同步模型评分数据。<a href="#" style="color:var(--blue)" onclick="alert('JSON 格式：{\"models\":[{\"id\":\"groq/llama-3.3-70b\",\"tier\":\"A-\",\"swe_score\":\"39.5%\",\"ctx\":\"128k\"}]}')">查看格式</a></p>
+        <p style="font-size:14px;color:var(--dim);margin-bottom:10px">设置一个 JSON URL 来自动同步模型评分数据。<a href="#" style="color:var(--blue)" onclick="alert('JSON 格式：{&quot;models&quot;:[{&quot;id&quot;:&quot;groq/llama-3.3-70b&quot;,&quot;tier&quot;:&quot;A-&quot;,&quot;swe_score&quot;:&quot;39.5%&quot;,&quot;ctx&quot;:&quot;128k&quot;}]}')">查看格式</a></p>
         <div class="fr"><label>JSON URL</label><input type="text" id="sweBenchUrl" placeholder="https://example.com/swe-bench.json" style="flex:1"></div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="btn btn-p" onclick="sBS()">保存并同步</button>
@@ -1096,15 +1097,15 @@ async function rM(){
   // 静态模型 + 发现模型，按 model ID 去重（静态优先）
   const seenIds=new Set();
   const all=[];
-  for(const m of sm){const id=m[0];if(!seenIds.has(id)){seenIds.add(id);all.push({id,name:m[1],tier:m[2],provider:m[5],source:'静态'});}}
-  for(const m of disc){const id=m.id;if(!seenIds.has(id)){seenIds.add(id);all.push({id,name:m.id,tier:'discovered',provider:m.provider,source:'发现'});}}
+  for(const m of sm){const id=m[0];if(!seenIds.has(id)){seenIds.add(id);all.push({id,name:m[1],tier:'',provider:m[5]});}}
+  for(const m of disc){const id=m.id;if(!seenIds.has(id)){seenIds.add(id);all.push({id,name:m.id,tier:'',provider:m.provider});}}
   const filtered=all.filter(m=>keyedProviders.has(m.provider));
   // 按等级排序（S+ 在最前，C 在最后）
-  const tierOrder={'S+':0,'S':1,'A+':2,'A':3,'A-':4,'B+':5,'B':6,'C':7,'discovered':8,'':9};
+  const tierOrder={'S+':0,'S':1,'A+':2,'A':3,'A-':4,'B+':5,'B':6,'C':7,'':9};
   filtered.sort((a,b)=>{
-    const ta=mt[gk(a)]||a.tier||a[2]||'';
-    const tb=mt[gk(b)]||b.tier||b[2]||'';
-    const oa=tierOrder[ta]??9,ob=tierOrder[tb]??9;
+    const ta=mt[gk(a)];
+    const tb=mt[gk(b)];
+    const oa=ta?tierOrder[ta]??9:9,ob=tb?tierOrder[tb]??9:9;
     if(oa!==ob)return oa-ob;
     return (a.id||a[0]||'').localeCompare(b.id||b[0]||'');
   });
@@ -1113,7 +1114,7 @@ async function rM(){
   if(badge) badge.textContent=filtered.length>0?String(filtered.length):'';
   // 更新页眉文案
   document.getElementById('mc').textContent=filtered.length>0?'已配置 '+filtered.length+' 个（共 '+all.length+'）':'暂无配置';
-  document.getElementById('mtb').innerHTML=filtered.length>0?filtered.map(m=>{const t=gt(m),en=ie(m),p=m.provider||m[5]||'';return '<tr><td><label class="tog"><input type="checkbox" '+(en?'checked':'')+' onchange="tM(\\''+jsesc(m.id||m[0])+'\\',\\''+jsesc(p)+'\\',this.checked)"><span class="sl"></span></label></td><td style="font-family:monospace;font-size:var(--font-sm)">'+esc(m.id||m[0])+'</td><td>'+esc(m.name||m[1])+'</td><td><select class="ts" onchange="sT(\\''+jsesc(m.id||m[0])+'\\',\\''+jsesc(p)+'\\',this.value)">'+TIERS.map(t2=>'<option value="'+t2+'" '+(t===t2?'selected':'')+'>'+t2+'</option>').join('')+'</select></td><td>'+esc(p)+'</td><td style="color:var(--dim)">'+m.source+'</td></tr>';}).join(''):'<tr><td colspan="6" class="empty">暂无模型，请先在「提供商」页签添加 API Key</td></tr>';
+  document.getElementById('mtb').innerHTML=filtered.length>0?filtered.map(m=>{const t=gt(m),en=ie(m),p=m.provider||m[5]||'';return '<tr><td><label class="tog"><input type="checkbox" '+(en?'checked':'')+' onchange="tM(\\''+jsesc(m.id||m[0])+'\\',\\''+jsesc(p)+'\\',this.checked)"><span class="sl"></span></label></td><td style="font-family:monospace;font-size:var(--font-sm)">'+esc(m.id||m[0])+'</td><td>'+esc(m.name||m[1])+'</td><td><select class="ts" onchange="sT(\\''+jsesc(m.id||m[0])+'\\',\\''+jsesc(p)+'\\',this.value)">'+TIERS.map(t2=>'<option value="'+t2+'" '+(t===t2?'selected':'')+'>'+t2+'</option>').join('')+'</select></td><td>'+esc(p)+'</td></tr>';}).join(''):'<tr><td colspan="5" class="empty">暂无模型，请先在「提供商」页签添加 API Key</td></tr>';
 }
 /**
  * tM — 切换单个模型的启用/禁用状态
@@ -1457,7 +1458,7 @@ async function pollAutoTierProgress(){
   const total=r.total||1;
   const pct=Math.round((r.completed/total)*100);
   document.getElementById('autoTierBar').style.width=pct+'%';
-  document.getElementById('autoTierCounts').textContent='✅ '+r.ok+' 个可用·❌ '+r.fail+' 个不可用·⏳ '+(total-r.completed)+' 个待测';
+  document.getElementById('autoTierCounts').textContent='✅ '+r.ok+' 个可用·❌ '+r.fail+' 个不可用'+(r.skip>0?'·⏭ '+r.skip+' 个跳过':'')+'·⏳ '+(total-r.completed)+' 个待测';
   document.getElementById('autoTierStatus').textContent=r.current||('进度: '+r.completed+'/'+total);
   if(r.running){
     _autoTierPollTimer=setTimeout(pollAutoTierProgress,800);
@@ -1545,10 +1546,10 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')cDM();});
 </div>
 <script>
 // 检测默认密码提示（弹窗 DOM 已就绪）
-if(new URLSearchParams(window.location.search).get('change_password')==='1'){
+if(initData.isDefaultPassword){
   document.getElementById('changePwModal').classList.add('show');
 }
-function closeChangePwModal(){document.getElementById('changePwModal').classList.remove('show');history.replaceState(null,'',location.pathname);}
+function closeChangePwModal(){document.getElementById('changePwModal').classList.remove('show');}
 async function doChangeDefaultPw(){
   const cur=document.getElementById('cpwCur').value;
   const pw=document.getElementById('cpwNew').value;
@@ -1562,6 +1563,7 @@ async function doChangeDefaultPw(){
   const d=await r.json();
   if(d.success){
     document.getElementById('changePwModal').classList.remove('show');
+    initData.isDefaultPassword=false;
     history.replaceState(null,'',location.pathname);
   }else{
     errEl.textContent=d.error||'修改失败';errEl.style.display='block';
@@ -2038,7 +2040,7 @@ async function handleAutoTier(req, res) {
     return jsonResponse(res, 200, { running: false, message: '没有未定级的模型' });
   }
 
-  _autoTierState = { running: true, total: totalModels, completed: 0, ok: 0, fail: 0, current: '' };
+  _autoTierState = { running: true, total: totalModels, completed: 0, ok: 0, fail: 0, skip: 0, current: '' };
 
   // Start background process
   runAutoTierBackground(config, allModels).catch(() => {});
@@ -2066,11 +2068,7 @@ async function runAutoTierForProvider(config, provider, models) {
   if (!source.noKeyRequired) {
     const keys = getAllApiKeys(config, provider);
     if (keys.length === 0) {
-      // Skip all models for this provider (no key)
-      for (const m of models) {
-        _autoTierState.completed++;
-        _autoTierState.fail++;
-      }
+      // No API key — skip silently, don't count as fail
       return;
     }
     apiKey = keys[0];
@@ -2177,6 +2175,7 @@ async function handleGetConfig(res) {
   jsonResponse(res, 200, {
     serverApiKey: getServerApiKey(config),
     adminUsername: getAdminUsername(),
+    isDefaultPassword: isUsingDefaultPassword(getAdminUsername()),
     apiKeys,
     enabledProviders,
     allProviders,
