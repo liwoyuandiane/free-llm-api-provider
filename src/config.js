@@ -45,6 +45,7 @@ const ENV_VARS = {
   'bazaarlink': 'BAZAARLINK_API_KEY',
   'ainative-studio': 'AINATIVE_API_KEY',
   'aihorde': 'AIHORDE_API_KEY',
+  'anthropic': 'ANTHROPIC_API_KEY',
 };
 
 function isPlainObject(value) {

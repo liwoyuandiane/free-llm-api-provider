@@ -55,6 +55,7 @@ const _SIGNUP_URLS = {
   'bazaarlink': 'https://bazaarlink.ai/',
   'ainative-studio': 'https://ainative.studio/',
   'aihorde': 'https://aihorde.net/register',
+  'anthropic': 'https://console.anthropic.com/',
 };
 const _FREE_TIER_INFO = {
   nvidia: '40 RPM (no credit card)',
@@ -81,6 +82,7 @@ const _FREE_TIER_INFO = {
   'bazaarlink': 'Free tier with API key',
   'ainative-studio': 'Free tier with API key',
   'aihorde': 'Community-powered, anonymous (slow)',
+  'anthropic': 'Pay-as-you-go (API key required)',
 };
 
 /**

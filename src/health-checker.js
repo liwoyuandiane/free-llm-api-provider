@@ -51,6 +51,19 @@ function buildPingRequest(apiKey, modelId, providerKey, url) {
     };
   }
 
+  // Anthropic uses x-api-key header and different body format
+  if (providerKey === 'anthropic') {
+    return {
+      url,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey || '',
+        'anthropic-version': '2023-06-01',
+      },
+      body: { model: apiModelId, max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] },
+    };
+  }
+
   const headers = { 'Content-Type': 'application/json' };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   if (providerKey === 'openrouter') {

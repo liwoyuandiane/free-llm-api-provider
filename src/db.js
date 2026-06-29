@@ -1220,6 +1220,7 @@ const PROVIDER_LIMITS = {
   'bazaarlink': { rpm: 30, rpd: 5000 },
   'ainative-studio': { rpm: 30, rpd: 5000 },
   'aihorde': { rpm: 10, rpd: 200 },
+  'anthropic': { rpm: 50, rpd: 10000 },
 };
 
 function getProviderLimits(provider) {

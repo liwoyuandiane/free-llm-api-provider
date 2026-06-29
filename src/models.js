@@ -218,6 +218,16 @@ const bazaarlink = [];
 const ainativeStudio = [];
 const aihorde = [];
 
+// Anthropic / Claude
+const anthropicModels = [
+  ['claude-sonnet-4-8', 'Claude Sonnet 4.8', '200k'],
+  ['claude-opus-4-8', 'Claude Opus 4.8', '200k'],
+  ['claude-sonnet-4-6', 'Claude Sonnet 4.6', '200k'],
+  ['claude-opus-4-6', 'Claude Opus 4.6', '200k'],
+  ['claude-sonnet-4-5', 'Claude Sonnet 4.5', '200k'],
+  ['claude-haiku-4-5', 'Claude Haiku 4.5', '200k'],
+];
+
 // Sources map
 const sources = {
   nvidia: { name: 'NVIDIA', url: 'https://integrate.api.nvidia.com/v1/chat/completions', models: nvidiaNim },
@@ -244,6 +254,7 @@ const sources = {
   'bazaarlink': { name: 'BazaarLink', url: 'https://api.bazaarlink.ai/v1/chat/completions', models: bazaarlink },
   'ainative-studio': { name: 'AI Native Studio', url: 'https://api.ainative.studio/v1/chat/completions', models: ainativeStudio },
   'aihorde': { name: 'AI Horde', url: 'https://aihorde.net/api/v2/chat/completions', models: aihorde, noKeyRequired: true },
+  'anthropic': { name: 'Anthropic', url: 'https://api.anthropic.com/v1/messages', models: anthropicModels, anthropicFormat: true },
 };
 
 // Flat MODELS array with providerKey as 4th element (tier/swe from swe-bench.json)

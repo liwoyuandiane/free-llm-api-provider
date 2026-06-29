@@ -408,6 +408,7 @@ function getPrioritizedProviders(config, opts = {}) {
         healthLatency,
         models: models.map(m => m[0]),
         modelTiers: Object.fromEntries(models.map(m => [m[0], m[2] || 'B'])),
+        anthropicFormat: !!provider?.anthropicFormat,
       });
     }
   }
@@ -711,13 +712,38 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
   console.log(`[Proxy] Trying provider: ${provider.key} (${provider.name})${keyInfo}${modelInfo} ${isStream ? '(streaming)' : ''}`);
 
   try {
+    const headers = { 'Content-Type': 'application/json' };
+    let requestBodyStr = bodyStr;
+    let isAnthropic = provider.anthropicFormat;
+
+    if (isAnthropic) {
+      // Anthropic uses x-api-key header instead of Bearer
+      headers['x-api-key'] = provider.apiKey;
+      headers['anthropic-version'] = '2023-06-01';
+      // Convert OpenAI format to Anthropic format
+      try {
+        const openaiBody = JSON.parse(bodyStr);
+        const anthropicBody = {
+          model: openaiBody.model,
+          max_tokens: openaiBody.max_tokens || 4096,
+          messages: openaiBody.messages || [],
+          stream: openaiBody.stream || false,
+        };
+        // Extract system prompt if present (Anthropic uses top-level "system" field)
+        if (openaiBody.messages && openaiBody.messages.length > 0 && openaiBody.messages[0].role === 'system') {
+          anthropicBody.system = openaiBody.messages[0].content;
+          anthropicBody.messages = openaiBody.messages.slice(1);
+        }
+        requestBodyStr = JSON.stringify(anthropicBody);
+      } catch { /* fall through to original body */ }
+    } else {
+      headers['Authorization'] = `Bearer ${provider.apiKey}`;
+    }
+
     const response = await fetch(targetUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${provider.apiKey}`,
-      },
-      body: bodyStr,
+      headers,
+      body: requestBodyStr,
       signal: AbortSignal.timeout(PROVIDER_TIMEOUT),
     });
 
@@ -830,10 +856,43 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
     
     // NON-STREAMING MODE: collect full response
     const data = await response.text();
+
+    // Convert Anthropic response format to OpenAI format
+    let responseData = data;
+    if (isAnthropic) {
+      try {
+        const anthroResp = JSON.parse(data);
+        // Anthropic format → OpenAI format
+        const textContent = (anthroResp.content || [])
+          .filter(p => p.type === 'text')
+          .map(p => p.text)
+          .join('');
+        const openaiResp = {
+          id: 'chatcmpl-' + anthroResp.id?.replace('msg_', '') || Date.now().toString(36),
+          object: 'chat.completion',
+          created: Math.floor(Date.now() / 1000),
+          model: 'anthropic/' + (anthroResp.model || selectedModelId),
+          choices: [{
+            index: 0,
+            message: { role: 'assistant', content: textContent || null },
+            finish_reason: anthroResp.stop_reason === 'end_turn' ? 'stop' : (anthroResp.stop_reason || 'stop'),
+          }],
+          usage: {
+            prompt_tokens: anthroResp.usage?.input_tokens || 0,
+            completion_tokens: anthroResp.usage?.output_tokens || 0,
+            total_tokens: (anthroResp.usage?.input_tokens || 0) + (anthroResp.usage?.output_tokens || 0),
+          },
+        };
+        responseData = JSON.stringify(openaiResp);
+      } catch (e) {
+        console.warn('[Proxy] Anthropic response parse error:', e.message);
+      }
+    }
+
     console.log(`[Proxy] ✅ ${provider.key} succeeded (${response.status})`);
     recordSuccess(provider.key);
-    
-    const cleanedData = cleanResponseBody(data);
+
+    const cleanedData = cleanResponseBody(responseData);
     // 尝试从响应中解析 token 用量
     let tokensIn = 0;
     let tokensOut = 0;
