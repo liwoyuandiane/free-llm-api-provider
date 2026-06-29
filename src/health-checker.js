@@ -8,10 +8,12 @@
 
 const { getAllApiKeys } = require('./config');
 const { sources } = require('./models');
+const { saveHealthState, getHealthStateAll } = require('./db');
 
 // Constants
 const PING_TIMEOUT = 15000;
 const HEALTH_CHECK_INTERVAL = 30000;
+const PERSIST_INTERVAL = 30 * 60 * 1000; // Persist to DB every 30 min
 
 // Health state per provider-key combo
 const healthState = new Map(); // providerKey -> { keys: [{key, latency, status, quota, lastCheck, pings, score}], bestModel }
@@ -151,28 +153,31 @@ async function pingProvider(providerKey, apiKey, modelId) {
 async function runHealthCheck(config) {
   const checks = [];
   const providerModels = new Map();
-  
+
   for (const [providerKey, provider] of Object.entries(sources)) {
     if (!provider.url || provider.cliOnly || provider.zenOnly) continue;
-    
+
     const keys = getAllApiKeys(config, providerKey);
-    if (keys.length === 0) continue;
-    
+    if (keys.length === 0 && !provider.noKeyRequired) continue;
+
     // Get best model for this provider (first S+ or S or first available)
     const models = require('./models').getModelsByProvider(providerKey);
     const bestModel = models.find(m => m[2] === 'S+') || models.find(m => m[2] === 'S') || models[0];
     const modelId = bestModel ? bestModel[0] : null;
     providerModels.set(providerKey, { modelId, modelName: bestModel ? bestModel[1] : 'Unknown' });
-    
-    if (!modelId) continue;
-    
+
+    if (!modelId) continue; // Skip providers with no models
+
+    // Use empty key for providers that don't need one
+    const effectiveKeys = keys.length > 0 ? keys : [''];
+
     // Check each key
-    for (const key of keys) {
-      const keySuffix = key.slice(-8);
+    for (const key of effectiveKeys) {
+      const keySuffix = key.length >= 8 ? key.slice(-8) : key || 'anon';
       checks.push(pingProvider(providerKey, key, modelId).then(r => ({...r, modelId, keySuffix})));
     }
   }
-  
+
   const results = await Promise.all(checks);
   
   // Group results by provider
@@ -280,7 +285,24 @@ async function runHealthCheck(config) {
 }
 
 function startHealthChecker(config) {
+  // Load previous health state from DB (so data survives refresh)
+  try {
+    const saved = getHealthStateAll();
+    for (const s of saved) {
+      healthState.set(s.key, {
+        keys: s.keys,
+        bestModel: 'Unknown',
+        overallScore: s.score,
+        overallStatus: s.status,
+      });
+    }
+    if (saved.length > 0) {
+      console.log('[Health] 已从数据库恢复 ' + saved.length + ' 个提供商健康状态');
+    }
+  } catch {}
+
   runHealthCheck(config).catch(err => console.error('[Health] Initial check error:', err instanceof Error ? err.message : String(err)));
+  let persistCounter = 0;
   const interval = setInterval(() => {
     // Cleanup stale entries (providers no longer in sources)
     for (const key of healthState.keys()) {
@@ -289,8 +311,31 @@ function startHealthChecker(config) {
       }
     }
     runHealthCheck(config).catch(err => console.error('[Health] Interval check error:', err instanceof Error ? err.message : String(err)));
+
+    // Persist to DB every ~30 min (every 60th check at 30s interval)
+    persistCounter++;
+    if (persistCounter >= 60) {
+      persistCounter = 0;
+      persistHealthState();
+    }
   }, HEALTH_CHECK_INTERVAL);
+
+  // Also persist on process exit
+  process.on('exit', () => { persistHealthState(); });
+  process.on('SIGINT', () => { persistHealthState(); });
+  process.on('SIGTERM', () => { persistHealthState(); });
+
   return interval;
+}
+
+function persistHealthState() {
+  try {
+    for (const [key, state] of healthState.entries()) {
+      saveHealthState(key, state);
+    }
+  } catch (e) {
+    console.warn('[Health] 持久化健康状态失败:', e.message);
+  }
 }
 
 function getHealthyProviders() {

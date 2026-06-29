@@ -426,6 +426,19 @@ function createTables() {
     )
   `);
 
+  // Health check state (persisted so data survives refresh)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS health_state (
+      provider TEXT PRIMARY KEY,
+      score INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'unknown',
+      avg_latency INTEGER NOT NULL DEFAULT -1,
+      quota INTEGER DEFAULT NULL,
+      keys_json TEXT DEFAULT '[]',
+      last_check TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   // Analytics tables for request logging
   createAnalyticsTables();
 }
@@ -1003,6 +1016,127 @@ function deleteCustomProviderModel(providerName, modelId) {
 }
 
 // ============================================================================
+// Health state persistence
+// ============================================================================
+function saveHealthState(provider, data) {
+  db.prepare(
+    `INSERT OR REPLACE INTO health_state (provider, score, status, avg_latency, quota, keys_json, last_check)
+     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`
+  ).run(
+    provider,
+    data.score || 0,
+    data.status || 'unknown',
+    data.avgLatency >= 0 ? data.avgLatency : -1,
+    data.quota !== undefined && data.quota !== null ? data.quota : null,
+    JSON.stringify(data.keys || [])
+  );
+}
+
+function getHealthStateAll() {
+  try {
+    return db.prepare('SELECT * FROM health_state ORDER BY score DESC').all().map(r => ({
+      key: r.provider,
+      score: r.score,
+      status: r.status,
+      avgLatency: r.avg_latency,
+      quota: r.quota,
+      keys: JSON.parse(r.keys_json || '[]'),
+      lastCheck: r.last_check,
+    }));
+  } catch { return []; }
+}
+
+function clearHealthState() {
+  db.exec('DELETE FROM health_state');
+}
+
+function getHealthStateLastCheck(provider) {
+  try {
+    const r = db.prepare('SELECT last_check FROM health_state WHERE provider = ?').get(provider);
+    return r ? r.last_check : null;
+  } catch { return null; }
+}
+
+/**
+ * Apply SWE-bench tiers to discovered models that don't have a tier assigned.
+ * Scans swe-bench.json (or sync_models) and sets model_tiers for matching discovered models.
+ */
+function applyTiersToDiscoveredModels() {
+  try {
+    const discovered = getDiscoveredModels();
+    if (!discovered.length) return 0;
+
+    // Build tier lookup from sync_models (SWE-bench data synced from remote)
+    const exactTiers = {};
+    try {
+      const synced = db.prepare("SELECT provider, model_id, tier FROM sync_models WHERE tier != ''").all();
+      for (const s of synced) {
+        exactTiers[s.provider + '/' + s.model_id] = s.tier;
+      }
+    } catch {}
+
+    // Also check swe-bench.json entries stored in sync_models
+    // These use format: provider/model_id
+
+    let count = 0;
+    for (const dm of discovered) {
+      const key = dm.provider + '/' + dm.model_id;
+      let tier = exactTiers[key];
+
+      // Fallback: pattern-based tier for exact model name match
+      if (!tier) {
+        const lowerId = dm.model_id.toLowerCase();
+        const namePart = dm.model_id.split('/').pop()?.toLowerCase() || '';
+
+        // S+ tier
+        if (/claude.*(?:opus|sonnet|4)/.test(lowerId) ||
+            /gpt-4(?:o|\.)?(?!.*mini)/.test(lowerId) ||
+            /gemini.*(?:ultra|2\.(?:0|5)|pro)/.test(lowerId) ||
+            /deepseek.*(?:v3|r1)/.test(lowerId) ||
+            /qwen.*(?:3|max|plus|480|235)/.test(lowerId) ||
+            /kimi.*(?:k2|k2\.5|k2\.6)/.test(lowerId)) {
+          if (/mini|tiny|small|nano/.test(namePart)) tier = 'A+';
+          else if (/flash|lite|fast/.test(namePart)) tier = 'A';
+          else tier = 'S+';
+        }
+        // S tier
+        else if (/claude|gpt-4|gemini|deepseek|qwen|kimi|mistral-large|llama.*(?:70|90|405|maverick)/.test(lowerId) ||
+                 /nemotron.*super|command.*r\b/.test(lowerId)) {
+          tier = 'S';
+        }
+        // A+ or A tier
+        else if (/llama|mistral|mixtral|qwen|glm|phi-3|command|gemma.*(?:2|27)/.test(lowerId)) {
+          if (/mini|tiny|small|nano/.test(namePart)) tier = 'B+';
+          else tier = 'A';
+        }
+        // B+ tier
+        else if (/gemma|phi|granite|falcon|dbrx|solar|aya/.test(lowerId)) {
+          tier = 'B+';
+        }
+        // Default: B
+        else {
+          tier = 'B';
+        }
+      }
+
+      if (tier) {
+        try {
+          const existing = db.prepare('SELECT tier FROM model_tiers WHERE model_id = ? AND provider = ?').get(dm.model_id, dm.provider);
+          if (!existing || !existing.tier) {
+            db.prepare('INSERT OR REPLACE INTO model_tiers (model_id, provider, tier) VALUES (?, ?, ?)').run(dm.model_id, dm.provider, tier);
+            count++;
+          }
+        } catch {}
+      }
+    }
+    return count;
+  } catch (e) {
+    console.warn('[DB] applyTiersToDiscoveredModels:', e.message);
+    return 0;
+  }
+}
+
+// ============================================================================
 // Password & Username change
 // ============================================================================
 function changeAdminPassword(username, newPassword) {
@@ -1456,6 +1590,11 @@ module.exports = {
   getModelTier,
   getAllModelTiers,
   getModelsWithTier,
+  saveHealthState,
+  getHealthStateAll,
+  clearHealthState,
+  getHealthStateLastCheck,
+  applyTiersToDiscoveredModels,
   recordRateLimit,
   isRateLimited,
   setCooldown,

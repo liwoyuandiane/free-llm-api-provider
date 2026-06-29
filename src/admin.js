@@ -30,7 +30,7 @@ function _recordLoginAttempt(ip) {
 const { loadConfig, saveConfig, addApiKey, removeApiKey, getAllApiKeys, getServerApiKey } = require('./config');
 const { sources, MODELS, getModelsByProvider } = require('./models');
 const { runHealthCheck, getHealthyProviders } = require('./health-checker');
-const { verifyAdminLogin, createSession, validateSession, deleteSession, updateSessionUsername, getMeta, setMeta, getDiscoveredModels: dbGetDiscoveredModels, saveDiscoveredModels, getAllProviderKeys, addProviderKey, updateProviderKeyNotes, removeProviderKey, removeAllProviderKeys, setProviderEnabled, isProviderEnabled, regenerateServerApiKey, setModelEnabled, getAllModelStates, getCustomProviders, saveCustomProvider, deleteCustomProvider, setCustomProviderEnabled, getCustomProviderModels, saveCustomProviderModel, deleteCustomProviderModel, changeAdminPassword, changeAdminUsername, getAdminUsername, getProviderTestModel, setProviderTestModel, setModelTier, getAllModelTiers, getServerApiKey: dbGetServerApiKey, isUsingDefaultPassword, markPasswordChanged, getAllProviderPriorities, setProviderPriority, deleteProviderPriority, getAllProviderSettings } = require('./db');
+const { verifyAdminLogin, createSession, validateSession, deleteSession, updateSessionUsername, getMeta, setMeta, getDiscoveredModels: dbGetDiscoveredModels, saveDiscoveredModels, getAllProviderKeys, addProviderKey, updateProviderKeyNotes, removeProviderKey, removeAllProviderKeys, setProviderEnabled, isProviderEnabled, regenerateServerApiKey, setModelEnabled, getAllModelStates, getCustomProviders, saveCustomProvider, deleteCustomProvider, setCustomProviderEnabled, getCustomProviderModels, saveCustomProviderModel, deleteCustomProviderModel, changeAdminPassword, changeAdminUsername, getAdminUsername, getProviderTestModel, setProviderTestModel, setModelTier, getAllModelTiers, getServerApiKey: dbGetServerApiKey, isUsingDefaultPassword, markPasswordChanged, getAllProviderPriorities, setProviderPriority, deleteProviderPriority, getAllProviderSettings, getHealthStateAll, applyTiersToDiscoveredModels } = require('./db');
 
 const _SIGNUP_URLS = {
   nvidia: 'https://build.nvidia.com/settings/api-keys',
@@ -1213,7 +1213,7 @@ async function rH(){
   const g=document.getElementById('healthGrid');g.innerHTML='<div class="load" style="margin:18px auto"></div>';
   const d=await api('/health'),pr=d.providers||[];
   if(!pr.length){g.innerHTML='<div class="empty">无数据，请先运行健康检查</div>';return;}
-  g.innerHTML=pr.map(p=>{const cls=p.score>=70?'gd':(p.score>=40?'ok':'bd'),lat=p.avgLatency>0?Math.round(p.avgLatency)+'ms':'--';return '<div class="hc"><div class="nm"><span class="dot '+p.status+'"></span>'+esc(p.name)+'</div><div class="sc '+cls+'">'+p.score+'</div><div class="st">'+(p.status==='up'?'在线':p.status)+' · '+lat+'</div></div>';}).join('');
+  g.innerHTML=pr.map(p=>{const cls=p.score>=70?'gd':(p.score>=40?'ok':'bd'),lat=p.avgLatency>0?Math.round(p.avgLatency)+'ms':'--';const stMap={'up':'在线','timeout':'超时','auth_error':'密钥错误','rate_limited':'限流','offline':'离线','error':'错误','unknown':'未知'};return '<div class="hc"><div class="nm"><span class="dot '+(p.status==='up'?'up':'down')+'"></span>'+esc(p.name)+'</div><div class="sc '+cls+'">'+p.score+'</div><div class="st">'+(stMap[p.status]||p.status)+' · '+lat+'</div></div>';}).join('');
 }
 /**
  * rHC — 手动触发一次健康检查
@@ -2177,6 +2177,13 @@ async function handleDiscoverModels(req, res, providerKey) {
   if (!apiKey) return jsonResponse(res, 200, { models: [] });
 
   const models = await discoverProviderModels(realProviderKey, apiKey);
+  // Auto-assign tiers to newly discovered models
+  if (models.length > 0) {
+    try {
+      const assigned = applyTiersToDiscoveredModels();
+      if (assigned > 0) console.log('[Admin] 已为 ' + assigned + ' 个发现模型分配等级');
+    } catch {}
+  }
   jsonResponse(res, 200, { models });
 }
 
@@ -2186,7 +2193,18 @@ async function handleHealth(req, res) {
     await runHealthCheck(config);
   }
 
-  const healthy = getHealthyProviders();
+  let healthy = getHealthyProviders();
+
+  // Fall back to DB if in-memory is empty (page refresh recovery)
+  if (!healthy || healthy.length === 0) {
+    try {
+      const dbHealth = getHealthStateAll();
+      if (dbHealth && dbHealth.length > 0) {
+        healthy = dbHealth;
+      }
+    } catch {}
+  }
+
   const providers = healthy.map(h => ({
     key: h.key,
     name: sources[h.key]?.name || h.key,

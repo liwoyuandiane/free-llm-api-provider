@@ -893,6 +893,15 @@ Make sure the proxy is running (flap / free-llm-api-provider).
         }).catch(() => {});
       }
     } catch {}
+
+    // Auto-assign tiers to discovered models from synced data
+    try {
+      const { applyTiersToDiscoveredModels } = require('./db');
+      setTimeout(() => {
+        const assigned = applyTiersToDiscoveredModels();
+        if (assigned > 0) console.log(`[Auto] 已为 ${assigned} 个发现模型自动分配等级`);
+      }, 2000); // Slight delay to let SWE-bench sync finish first
+    } catch {}
     
     // Periodic auto-sync every 6 hours (respects SYNC_INTERVAL from sync.js = 24h)
     const SYNC_CHECK_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
