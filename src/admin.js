@@ -513,7 +513,17 @@ tr:hover td{background:var(--card-hover)}
       <div class="pt">模型目录</div>
       <div class="pd">启用/禁用模型，设置等级影响 tier 路由</div>
       <div class="c">
-        <div class="ch"><span class="ct">所有模型</span><span style="font-size:13px;color:var(--dim)" id="mc"></span><button class="btn btn-p btn-sm" id="saveTiersBtn" onclick="saveTiers()" style="display:none">保存等级</button></div>
+        <div class="ch"><span class="ct">所有模型</span><span style="font-size:13px;color:var(--dim)" id="mc"></span>
+          <span id="autoTierBtnWrap"><button class="btn btn-sm" onclick="startAutoTier()" id="autoTierBtn" style="margin-right:6px">自动定级</button></span>
+          <button class="btn btn-p btn-sm" id="saveTiersBtn" onclick="saveTiers()" style="display:none">保存等级</button>
+        </div>
+        <div id="autoTierProgress" style="display:none;margin-bottom:10px;padding:8px 12px;background:var(--bg);border:1px solid var(--b2);border-radius:var(--radius-sm)">
+          <div style="font-size:13px;color:var(--dim);margin-bottom:4px" id="autoTierStatus">初始化...</div>
+          <div style="height:4px;background:var(--b2);border-radius:2px;overflow:hidden;margin-bottom:4px">
+            <div id="autoTierBar" style="height:100%;width:0%;background:var(--blue);border-radius:2px;transition:width 0.3s ease"></div>
+          </div>
+          <div style="font-size:11px;color:var(--mut)" id="autoTierCounts">准备中...</div>
+        </div>
         <div style="margin-bottom:12px"><input type="text" id="modelSearch" placeholder="搜索模型名称或提供商..." oninput="filterModels(this.value)" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:var(--font-base)"></div>
         <div style="overflow-x:auto">
         <table><thead><tr><th style="width:34px">启用</th><th>模型 ID</th><th>名称</th><th style="width:85px">等级</th><th>提供商</th><th style="width:50px">来源</th></tr></thead>
@@ -611,18 +621,6 @@ tr:hover td{background:var(--card-hover)}
           <button class="btn btn-sm" onclick="sBE()">导出当前评分</button>
         </div>
         <p id="sweBenchStatus" style="font-size:12px;color:var(--mut);margin-top:6px"></p>
-      </div>
-      <div class="c">
-        <div class="ct" style="margin-bottom:4px">自动模型定级</div>
-        <p style="font-size:14px;color:var(--dim);margin-bottom:10px">逐模型测试可用性并按名称匹配自动分配等级。同一提供商串行（每5s一个），多提供商并行。测试不可用的模型保持未定级。</p>
-        <button class="btn btn-p" onclick="startAutoTier()" id="autoTierBtn">开始自动定级</button>
-        <div id="autoTierProgress" style="display:none;margin-top:10px">
-          <div style="font-size:13px;color:var(--dim);margin-bottom:6px" id="autoTierStatus">初始化...</div>
-          <div style="height:6px;background:var(--b2);border-radius:3px;overflow:hidden;margin-bottom:6px">
-            <div id="autoTierBar" style="height:100%;width:0%;background:var(--blue);border-radius:3px;transition:width 0.3s ease"></div>
-          </div>
-          <div style="font-size:12px;color:var(--mut)" id="autoTierCounts">准备中...</div>
-        </div>
       </div>
       <div class="c">
         <div class="ct" style="margin-bottom:4px">配置导出与导入</div>
@@ -1405,7 +1403,7 @@ async function startAutoTier(){
   document.getElementById('autoTierBar').style.width='0%';
   document.getElementById('autoTierCounts').textContent='准备中';
   const r=await api('/auto-tier',{method:'POST'});
-  if(r.error){t(r.error,'err');btn.disabled=false;btn.textContent='开始自动定级';return;}
+  if(r.error){t(r.error,'err');btn.disabled=false;btn.textContent='自动定级';return;}
   pollAutoTierProgress();
 }
 
@@ -1420,7 +1418,7 @@ async function pollAutoTierProgress(){
     _autoTierPollTimer=setTimeout(pollAutoTierProgress,800);
   }else{
     const btn=document.getElementById('autoTierBtn');
-    btn.disabled=false;btn.textContent='开始自动定级';
+    btn.disabled=false;btn.textContent='自动定级';
     if(r.completed>0)t('定级完成: 成功 '+r.ok+' 个');
   }
 }
