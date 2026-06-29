@@ -1297,10 +1297,13 @@ async function pgSend(){
       else{msgDiv.innerHTML=esc(contents||'(无内容)')+'<div class="pg-meta"><span style="color:var(--blue)">'+esc(provider)+'</span> · '+esc(streamModel||model)+'</div>';if(contents)_pgHistory.push({role:'assistant',content:contents});}
     }else{
       const d=await resp.json();
+      const start=Date.now();
       if(d.error){msgDiv.innerHTML='<span style="color:var(--red)">'+esc(d.error)+'</span>';}
       else{
         const c=d.choices?.[0]?.message?.content||'(无响应)';
-        msgDiv.innerHTML=esc(c)+'<div class="pg-meta"><span style="color:var(--blue)">'+esc(provider)+'</span> · '+esc(d.model||model)+'</div>';
+        const ms=Date.now()-start;
+        const usage=d.usage?(' \xb7 '+(d.usage.total_tokens||'?')+' tokens'):'';
+        msgDiv.innerHTML=esc(c)+'<div class="pg-meta"><span style="color:var(--blue)">'+esc(provider)+'</span> · '+esc(d.model||model)+usage+' · '+ms+'ms</div>';
         if(c&&c!=='(无响应)')_pgHistory.push({role:'assistant',content:c});
       }
     }
