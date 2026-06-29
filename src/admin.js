@@ -30,7 +30,7 @@ function _recordLoginAttempt(ip) {
 const { loadConfig, saveConfig, addApiKey, removeApiKey, getAllApiKeys, getServerApiKey } = require('./config');
 const { sources, MODELS, getModelsByProvider } = require('./models');
 const { runHealthCheck, getHealthyProviders } = require('./health-checker');
-const { verifyAdminLogin, createSession, validateSession, deleteSession, updateSessionUsername, getMeta, setMeta, getDiscoveredModels: dbGetDiscoveredModels, saveDiscoveredModels, getAllProviderKeys, addProviderKey, updateProviderKeyNotes, removeProviderKey, removeAllProviderKeys, setProviderEnabled, isProviderEnabled, regenerateServerApiKey, setModelEnabled, getAllModelStates, getCustomProviders, saveCustomProvider, deleteCustomProvider, setCustomProviderEnabled, getCustomProviderModels, saveCustomProviderModel, deleteCustomProviderModel, changeAdminPassword, changeAdminUsername, getAdminUsername, getProviderTestModel, setProviderTestModel, setModelTier, getAllModelTiers, getServerApiKey: dbGetServerApiKey, isUsingDefaultPassword, markPasswordChanged, getAllProviderPriorities, setProviderPriority, deleteProviderPriority, getAllProviderSettings, getHealthStateAll, applyTiersToDiscoveredModels } = require('./db');
+const { verifyAdminLogin, createSession, validateSession, deleteSession, updateSessionUsername, getMeta, setMeta, getDiscoveredModels: dbGetDiscoveredModels, saveDiscoveredModels, getAllProviderKeys, addProviderKey, updateProviderKeyNotes, removeProviderKey, removeAllProviderKeys, setProviderEnabled, isProviderEnabled, regenerateServerApiKey, setModelEnabled, getAllModelStates, getCustomProviders, saveCustomProvider, deleteCustomProvider, setCustomProviderEnabled, getCustomProviderModels, saveCustomProviderModel, deleteCustomProviderModel, changeAdminPassword, changeAdminUsername, getAdminUsername, getProviderTestModel, setProviderTestModel, setModelTier, setModelLocked, getAllModelTiers, getAllModelLocks, getServerApiKey: dbGetServerApiKey, isUsingDefaultPassword, markPasswordChanged, getAllProviderPriorities, setProviderPriority, deleteProviderPriority, getAllProviderSettings, getHealthStateAll, applyTiersToDiscoveredModels } = require('./db');
 
 const _SIGNUP_URLS = {
   nvidia: 'https://build.nvidia.com/settings/api-keys',
@@ -427,6 +427,9 @@ tr:hover td{background:var(--card-hover)}
 .load{display:inline-block;width:18px;height:18px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .empty{text-align:center;padding:48px 20px;color:var(--text-muted);font-size:var(--font-base)}
+.lk-btn{cursor:pointer;font-size:16px;opacity:0.5;transition:var(--transition);user-select:none}
+.lk-btn:hover{opacity:1}
+.lk-btn.lk-on{opacity:1}
 
 /* ── Modal ── */
 .modal-o{position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:99;display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
@@ -528,7 +531,7 @@ tr:hover td{background:var(--card-hover)}
         </div>
         <div style="margin-bottom:12px"><input type="text" id="modelSearch" placeholder="搜索模型名称或提供商..." oninput="filterModels(this.value)" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:var(--font-base)"></div>
         <div style="overflow-x:auto">
-        <table><thead><tr><th style="width:34px">启用</th><th>模型 ID</th><th>名称</th><th style="width:85px">等级</th><th>提供商</th></tr></thead>
+        <table><thead><tr><th style="width:34px">启用</th><th>模型 ID</th><th>名称</th><th style="width:85px">等级</th><th>提供商</th><th style="width:40px">锁定</th></tr></thead>
         <tbody id="mtb"></tbody></table>
         </div>
       </div>
@@ -1089,11 +1092,11 @@ function ednRestore(inp,prov,key){
  * 获取静态模型和发现模型，渲染带开关和分级下拉框的表格
  */
 async function rM(){
-  const d=await api('/config'),sm=d.allStaticModels||[],disc=d.discoveredModels||[],ms=d.modelStates||{},mt=d.modelTiers||{},ak=d.apiKeys||{};
+  const d=await api('/config'),sm=d.allStaticModels||[],disc=d.discoveredModels||[],ms=d.modelStates||{},mt=d.modelTiers||{},lk=d.modelLocks||{},ak=d.apiKeys||{};
   // 只显示已配置 API Key 的提供商的模型
   const keyedProviders=new Set(Object.keys(ak).filter(k=>Array.isArray(ak[k])&&ak[k].length>0));
   const gk=m=>{const p=m.provider||m[5]||'',id=m.id||m[0]||'';return p?p+'/'+id:id;};
-  const ie=m=>ms[gk(m)]!==false,gt=m=>mt[gk(m)]||m.tier||m[2]||'';
+  const ie=m=>ms[gk(m)]!==false,gt=m=>mt[gk(m)]||'',il=m=>!!lk[gk(m)];
   // 静态模型 + 发现模型，按 model ID 去重（静态优先）
   const seenIds=new Set();
   const all=[];
@@ -1114,7 +1117,7 @@ async function rM(){
   if(badge) badge.textContent=filtered.length>0?String(filtered.length):'';
   // 更新页眉文案
   document.getElementById('mc').textContent=filtered.length>0?'已配置 '+filtered.length+' 个（共 '+all.length+'）':'暂无配置';
-  document.getElementById('mtb').innerHTML=filtered.length>0?filtered.map(m=>{const t=gt(m),en=ie(m),p=m.provider||m[5]||'';return '<tr><td><label class="tog"><input type="checkbox" '+(en?'checked':'')+' onchange="tM(\\''+jsesc(m.id||m[0])+'\\',\\''+jsesc(p)+'\\',this.checked)"><span class="sl"></span></label></td><td style="font-family:monospace;font-size:var(--font-sm)">'+esc(m.id||m[0])+'</td><td>'+esc(m.name||m[1])+'</td><td><select class="ts" onchange="sT(\\''+jsesc(m.id||m[0])+'\\',\\''+jsesc(p)+'\\',this.value)">'+TIERS.map(t2=>'<option value="'+t2+'" '+(t===t2?'selected':'')+'>'+t2+'</option>').join('')+'</select></td><td>'+esc(p)+'</td></tr>';}).join(''):'<tr><td colspan="5" class="empty">暂无模型，请先在「提供商」页签添加 API Key</td></tr>';
+  document.getElementById('mtb').innerHTML=filtered.length>0?filtered.map(m=>{const t=gt(m),en=ie(m),p=m.provider||m[5]||'',lo=il(m);return '<tr><td><label class="tog"><input type="checkbox" '+(en?'checked':'')+' onchange="tM(\\''+jsesc(m.id||m[0])+'\\',\\''+jsesc(p)+'\\',this.checked)"><span class="sl"></span></label></td><td style="font-family:monospace;font-size:var(--font-sm)">'+esc(m.id||m[0])+'</td><td>'+esc(m.name||m[1])+'</td><td><select class="ts" onchange="sT(\\''+jsesc(m.id||m[0])+'\\',\\''+jsesc(p)+'\\',this.value)">'+TIERS.map(t2=>'<option value="'+t2+'" '+(t===t2?'selected':'')+'>'+t2+'</option>').join('')+'</select></td><td>'+esc(p)+'</td><td style="text-align:center"><span class="lk-btn'+(lo?' lk-on':'')+'" onclick="lk(\\''+jsesc(m.id||m[0])+'\\',\\''+jsesc(p)+'\\','+(!lo)+')" title="'+(lo?'已锁定，点击解锁':'点击锁定等级')+'">'+(lo?'🔒':'🔓')+'</span></td></tr>';}).join(''):'<tr><td colspan="6" class="empty">暂无模型，请先在「提供商」页签添加 API Key</td></tr>';
 }
 /**
  * tM — 切换单个模型的启用/禁用状态
@@ -1123,6 +1126,11 @@ async function rM(){
  * @param {boolean} en - 是否启用
  */
 async function tM(mid,prov,en){await api('/model-state',{method:'POST',body:{modelId:mid,provider:prov,enabled:en}});}
+async function lk(mid,prov,locked){
+  await api('/model-tier/lock',{method:'POST',body:{modelId:mid,provider:prov,locked}});
+  // Reload the models page to reflect the change
+  await rM();
+}
 /**
  * sT — 设置模型的分级（tier）
  * @param {string} mid - 模型 ID
@@ -1831,6 +1839,14 @@ async function handleSetModelTier(req, res) {
   jsonResponse(res, 200, { success: true });
 }
 
+async function handleToggleModelLock(req, res) {
+  const body = await readJsonBody(req);
+  const { modelId, provider, locked } = body;
+  if (!modelId) return jsonResponse(res, 400, { error: 'Missing modelId' });
+  setModelLocked(modelId, provider || '', !!locked);
+  jsonResponse(res, 200, { success: true });
+}
+
 async function handleGetProviderPriorities(res) {
   const priorities = getAllProviderPriorities();
   jsonResponse(res, 200, { priorities });
@@ -1989,13 +2005,16 @@ async function handleAutoTier(req, res) {
 
   const userTiers = getAllModelTiers();
   const toGrade = [];
+  const modelLocks = getAllModelLocks();
 
-  // Collect ALL models (both static and discovered) — always re-grade all models
+  // Collect ALL models (both static and discovered) — skip locked ones
   for (const m of MODELS) {
     const provider = m[5];
     const modelId = m[0];
     if (!provider || !sources[provider]?.url) continue;
     if (!modelId) continue;
+    const key = provider + '/' + modelId;
+    if (modelLocks[key]) continue; // Skip locked
     toGrade.push({ modelId, provider, label: m[1] || modelId });
   }
 
@@ -2003,6 +2022,8 @@ async function handleAutoTier(req, res) {
     const discovered = getAllDiscoveredModels();
     for (const dm of discovered) {
       if (!dm.model_id || !dm.provider) continue;
+      const key = dm.provider + '/' + dm.model_id;
+      if (modelLocks[key]) continue; // Skip locked
       if (!toGrade.find(m => m.modelId === dm.model_id && m.provider === dm.provider)) {
         toGrade.push({ modelId: dm.model_id, provider: dm.provider, label: dm.model_id });
       }
@@ -2119,6 +2140,7 @@ async function handleGetConfig(res) {
     modelStates,
     customProviders,
     modelTiers,
+    modelLocks: getAllModelLocks(),
     testModels,
     providerPriorities,
   });
@@ -2761,6 +2783,7 @@ async function handleAdminRequest(parsedUrl, req, res) {
         { method: 'POST',  path: '/model-state',         handler: () => handleModelState(req, res) },
         { method: 'POST',  path: '/test-model',          handler: () => handleSetTestModel(req, res) },
         { method: 'POST',  path: '/model-tier',          handler: () => handleSetModelTier(req, res) },
+        { method: 'POST',  path: '/model-tier/lock',     handler: () => handleToggleModelLock(req, res) },
         { method: 'GET',   path: '/custom-provider',     handler: () => handleGetCustomProviders(res) },
         { method: 'POST',  path: '/custom-provider',     handler: () => handleSaveCustomProvider(req, res) },
         { method: 'DELETE',path: '/custom-provider',     handler: () => handleDeleteCustomProvider(req, res) },

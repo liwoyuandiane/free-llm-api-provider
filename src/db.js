@@ -355,9 +355,12 @@ function createTables() {
       model_id TEXT NOT NULL,
       provider TEXT NOT NULL DEFAULT '',
       tier TEXT NOT NULL DEFAULT '',
+      locked INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (model_id, provider)
     )
   `);
+  // 迁移：为已有 model_tiers 表添加 locked 列
+  try { db.exec("ALTER TABLE model_tiers ADD COLUMN locked INTEGER NOT NULL DEFAULT 0"); } catch {}
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS discovered_models (
@@ -947,7 +950,19 @@ function getAllModelStates() {
 // Model tier assignment
 // ============================================================================
 function setModelTier(modelId, provider, tier) {
-  db.prepare('INSERT OR REPLACE INTO model_tiers (model_id, provider, tier) VALUES (?, ?, ?)').run(modelId, provider || '', tier || '');
+  // Don't overwrite locked tiers
+  const existing = db.prepare('SELECT locked FROM model_tiers WHERE model_id = ? AND provider = ?').get(modelId, provider || '');
+  if (existing && existing.locked) return;
+  db.prepare('INSERT OR REPLACE INTO model_tiers (model_id, provider, tier, locked) VALUES (?, ?, ?, COALESCE((SELECT locked FROM model_tiers WHERE model_id = ? AND provider = ?), 0))').run(modelId, provider || '', tier || '', modelId, provider || '');
+}
+
+function setModelLocked(modelId, provider, locked) {
+  db.prepare('INSERT OR REPLACE INTO model_tiers (model_id, provider, tier, locked) VALUES (?, ?, COALESCE((SELECT tier FROM model_tiers WHERE model_id = ? AND provider = ?), \'\'), ?)').run(modelId, provider || '', modelId, provider || '', locked ? 1 : 0);
+}
+
+function isModelLocked(modelId, provider) {
+  const row = db.prepare('SELECT locked FROM model_tiers WHERE model_id = ? AND provider = ?').get(modelId, provider || '');
+  return row ? row.locked === 1 : false;
 }
 
 function getModelTier(modelId, provider) {
@@ -961,6 +976,16 @@ function getAllModelTiers() {
   for (const row of rows) {
     const key = row.provider ? row.provider + '/' + row.model_id : row.model_id;
     result[key] = row.tier;
+  }
+  return result;
+}
+
+function getAllModelLocks() {
+  const rows = db.prepare('SELECT model_id, provider, locked FROM model_tiers WHERE locked = 1').all();
+  const result = {};
+  for (const row of rows) {
+    const key = row.provider ? row.provider + '/' + row.model_id : row.model_id;
+    result[key] = true;
   }
   return result;
 }
@@ -1558,8 +1583,10 @@ module.exports = {
   getProviderTestModel,
   setProviderTestModel,
   setModelTier,
+  setModelLocked,
   getModelTier,
   getAllModelTiers,
+  getAllModelLocks,
   getModelsWithTier,
   saveHealthState,
   getHealthStateAll,
