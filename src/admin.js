@@ -1450,6 +1450,15 @@ async function startAutoTier(){
   document.getElementById('autoTierCounts').textContent='准备中';
   const r=await api('/auto-tier',{method:'POST'});
   if(r.error){t(r.error,'err');btn.disabled=false;btn.textContent='自动定级';return;}
+  if(!r.running){
+    // 没有模型需要定级
+    const alreadyMsg = r.alreadyTiered ? '（其中 '+r.alreadyTiered+' 个已有分级）' : '';
+    document.getElementById('autoTierStatus').textContent=r.message||'完成'+alreadyMsg;
+    document.getElementById('autoTierBar').style.width='100%';
+    document.getElementById('autoTierCounts').textContent='✅ 无需定级';
+    btn.disabled=false;btn.textContent='自动定级';
+    return;
+  }
   pollAutoTierProgress();
 }
 
@@ -1458,14 +1467,15 @@ async function pollAutoTierProgress(){
   const total=r.total||1;
   const pct=Math.round((r.completed/total)*100);
   document.getElementById('autoTierBar').style.width=pct+'%';
-  document.getElementById('autoTierCounts').textContent='✅ '+r.ok+' 个可用·❌ '+r.fail+' 个不可用'+(r.skip>0?'·⏭ '+r.skip+' 个跳过':'')+'·⏳ '+(total-r.completed)+' 个待测';
+  const alreadyStr = r.alreadyTiered ? ' · 📋 '+r.alreadyTiered+' 个已有分级' : '';
+  document.getElementById('autoTierCounts').textContent='✅ '+r.ok+' 个可用·❌ '+r.fail+' 个不可用'+(r.skip>0?'·⏭ '+r.skip+' 个跳过':'')+alreadyStr+'·⏳ '+(total-r.completed)+' 个待测';
   document.getElementById('autoTierStatus').textContent=r.current||('进度: '+r.completed+'/'+total);
   if(r.running){
     _autoTierPollTimer=setTimeout(pollAutoTierProgress,800);
   }else{
     const btn=document.getElementById('autoTierBtn');
     btn.disabled=false;btn.textContent='自动定级';
-    if(r.completed>0)t('定级完成: 成功 '+r.ok+' 个');
+    if(r.ok>0)t('定级完成: 成功 '+r.ok+' 个');
   }
 }
 
@@ -2006,17 +2016,26 @@ async function handleAutoTier(req, res) {
 
   const config = loadConfig();
 
-  // Collect all ungraded models (no tier in model_tiers)
-  const allModels = {};
+  // Count models already tiered
   const userTiers = getAllModelTiers();
+  let alreadyTiered = 0;
+
+  // Collect all ungraded models (no tier in model_tiers) from providers WITH keys
+  const allModels = {};
 
   // Static models without tier
   for (const m of MODELS) {
     const provider = m[5];
     const modelId = m[0];
     if (!provider || !sources[provider]?.url) continue;
+    if (!modelId) continue;
     const key = provider + '/' + modelId;
-    if (userTiers[key]) continue; // Already has tier
+    if (userTiers[key]) { alreadyTiered++; continue; }
+    // Skip providers without API keys
+    if (!sources[provider]?.noKeyRequired) {
+      const pKeys = getAllApiKeys(config, provider);
+      if (pKeys.length === 0) continue;
+    }
     if (!allModels[provider]) allModels[provider] = [];
     allModels[provider].push({ modelId, label: m[1] || modelId });
   }
@@ -2025,9 +2044,15 @@ async function handleAutoTier(req, res) {
   try {
     const discovered = getAllDiscoveredModels();
     for (const dm of discovered) {
+      if (!dm.model_id) continue;
       const key = dm.provider + '/' + dm.model_id;
-      if (userTiers[key]) continue;
+      if (userTiers[key]) { alreadyTiered++; continue; }
       if (!allModels[dm.provider]) allModels[dm.provider] = [];
+      // Skip providers without API keys
+      if (!sources[dm.provider]?.noKeyRequired) {
+        const pKeys = getAllApiKeys(config, dm.provider);
+        if (pKeys.length === 0) continue;
+      }
       // Avoid duplicates
       if (!allModels[dm.provider].find(m => m.modelId === dm.model_id)) {
         allModels[dm.provider].push({ modelId: dm.model_id, label: dm.model_id, discovered: true });
@@ -2037,22 +2062,29 @@ async function handleAutoTier(req, res) {
 
   const totalModels = Object.values(allModels).reduce((s, v) => s + v.length, 0);
   if (totalModels === 0) {
-    return jsonResponse(res, 200, { running: false, message: '没有未定级的模型' });
+    const msg = alreadyTiered > 0 ? `所有 ${alreadyTiered} 个模型已有分级，无需定级` : '没有未定级的模型';
+    return jsonResponse(res, 200, { running: false, message: msg, alreadyTiered });
   }
 
-  _autoTierState = { running: true, total: totalModels, completed: 0, ok: 0, fail: 0, skip: 0, current: '' };
+  _autoTierState = { running: true, total: totalModels, completed: 0, ok: 0, fail: 0, skip: 0, current: '', alreadyTiered };
 
   // Start background process
   runAutoTierBackground(config, allModels).catch(() => {});
 
-  jsonResponse(res, 200, { running: true, total: totalModels });
+  jsonResponse(res, 200, { running: true, total: totalModels, alreadyTiered });
 }
 
 async function runAutoTierBackground(config, allModels) {
   const providerEntries = Object.entries(allModels);
 
   await Promise.all(providerEntries.map(([provider, models]) =>
-    runAutoTierForProvider(config, provider, models)
+    (async () => {
+      try {
+        await runAutoTierForProvider(config, provider, models);
+      } catch (e) {
+        console.warn('[AutoTier] Provider ' + provider + ' error:', e.message);
+      }
+    })()
   ));
 
   _autoTierState.running = false;
@@ -2063,56 +2095,32 @@ async function runAutoTierForProvider(config, provider, models) {
   const source = sources[provider];
   if (!source || !source.url) return;
 
-  // Get API key
-  let apiKey = '';
+  // Get API key — only needed to confirm provider is configured (skip if no key)
   if (!source.noKeyRequired) {
     const keys = getAllApiKeys(config, provider);
-    if (keys.length === 0) {
-      // No API key — skip silently, don't count as fail
-      return;
-    }
-    apiKey = keys[0];
+    if (keys.length === 0) return;
   }
 
-  // Serial test for this provider, 5s gap between models
+  // Assign tiers without API testing — use model name pattern matching
   for (let i = 0; i < models.length; i++) {
     const model = models[i];
-    _autoTierState.current = provider + ' → ' + model.label;
+    if (!model || !model.modelId) {
+      _autoTierState.skip++;
+      _autoTierState.completed++;
+      continue;
+    }
+    _autoTierState.current = provider + ' → ' + (model.label || model.modelId);
 
     try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (apiKey) headers.Authorization = 'Bearer ' + apiKey;
-      if (provider === 'openrouter') {
-        headers['HTTP-Referer'] = 'https://github.com/alexjm19/free-llm-api-provider';
-        headers['X-Title'] = 'free-llm-api-provider';
-      }
-
-      const resp = await fetch(source.url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ model: model.modelId, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
-        signal: AbortSignal.timeout(10000),
-      });
-
-      const available = resp.ok || resp.status === 429;
-
-      if (available) {
-        const tier = inferTierFromModelName(model.modelId);
-        setModelTier(model.modelId, provider, tier);
-        _autoTierState.ok++;
-      } else {
-        _autoTierState.fail++;
-      }
-    } catch {
+      const tier = inferTierFromModelName(model.modelId);
+      setModelTier(model.modelId, provider, tier);
+      _autoTierState.ok++;
+    } catch (e) {
       _autoTierState.fail++;
+      console.warn('[AutoTier] Error grading ' + model.modelId + ':', e.message);
     }
 
     _autoTierState.completed++;
-
-    // 5s delay between models (not after the last one)
-    if (i < models.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 5000));
-    }
   }
 }
 

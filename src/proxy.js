@@ -13,6 +13,8 @@ const { loadConfig, getEnabledProviders, getAllApiKeys, getServerApiKey } = requ
 const { sources, getModelsByProvider, ENV_VAR_NAMES, getModelLimits, isProviderShutdown } = require('./models');
 const { validateSession } = require('./db');
 
+const TIER_ALIAS_MAP = { 'tier-splus': 'S+', 'tier-s': 'S', 'tier-aplus': 'A+', 'tier-a': 'A', 'tier-aminus': 'A-', 'tier-bplus': 'B+', 'tier-b': 'B', 'tier-c': 'C' };
+
 // Token estimation (rough: ~4 chars per token for English, ~2 for CJK)
 function isStreaming(body) {
   return body.stream === true || body.stream === 'true' || body.stream === 1;
@@ -86,8 +88,8 @@ function checkContextFit(provider, reqBody) {
   return { fits: false, tokens: estimatedTokens, limit: firstLimits.context, model: provider.models[0] || '' };
 }
 const { getHealthyProviders } = require('./health-checker');
-const { handleAdminRequest } = require('./admin');
-const { initDatabase, getDisabledModels, getCustomProviders, getCustomProviderModels, getServerApiKey: dbGetServerApiKey, getModelsWithTier, isRateLimited, recordRateLimit, setCooldown, cleanRateLimits, getStickyProvider, setStickyProvider, isVisionModel, logRequest, getAllProviderPriorities, getDiscoveredModelsByProvider, getProviderLimits } = require('./db');
+const { handleAdminRequest, discoverProviderModels } = require('./admin');
+const { initDatabase, getDisabledModels, getCustomProviders, getCustomProviderModels, getServerApiKey: dbGetServerApiKey, getModelsWithTier, getAllModelTiers, isRateLimited, recordRateLimit, setCooldown, cleanRateLimits, getStickyProvider, setStickyProvider, isVisionModel, logRequest, getAllProviderPriorities, getDiscoveredModelsByProvider, getProviderLimits } = require('./db');
 
 /** 代理端口，默认 4002，可通过环境变量 FLAP_PORT 或 PORT 覆盖 */
 const PROXY_PORT = parseInt(process.env.FLAP_PORT || process.env.PORT || '4002', 10);
@@ -393,6 +395,7 @@ function getPrioritizedProviders(config, opts = {}) {
         healthScore,
         healthLatency,
         models: models.map(m => m[0]),
+        modelTiers: Object.fromEntries(models.map(m => [m[0], m[2] || 'B'])),
       });
     }
   }
@@ -643,8 +646,16 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
   // Determine which models to try (multi-model failover within provider)
   let modelsToTry = [provider.models[0]]; // default: first model
   if (requestBody.model && requestBody.model.startsWith('tier-')) {
-    // For tier requests, try all models in this provider (best tier first)
-    modelsToTry = provider.models;
+    // For tier requests, filter models by the requested tier level
+    const requestedTier = TIER_ALIAS_MAP[requestBody.model];
+    if (requestedTier && provider.modelTiers) {
+      modelsToTry = provider.models.filter(mid => provider.modelTiers[mid] === requestedTier);
+    } else {
+      modelsToTry = provider.models;
+    }
+    if (modelsToTry.length === 0) {
+      throw { status: 404, error: `No ${requestedTier || requestBody.model} models available for ${provider.key}`, provider: provider.key };
+    }
   } else if (requestBody.model === 'auto' || !requestBody.model) {
     modelsToTry = provider.models;
   }
@@ -1273,6 +1284,10 @@ function createServer() {
 function startProxyServer(port = PROXY_PORT) {
   // Initialize SQLite database (creates tables, migrates data, ensures admin user)
   try { initDatabase(); } catch (err) { console.error('[DB] Init error:', err instanceof Error ? err.message : String(err)); }
+
+  // Auto-discover models from all configured providers on startup
+  autoDiscoverModelsOnStartup();
+
   
   const server = createServer();
   
@@ -1283,6 +1298,24 @@ function startProxyServer(port = PROXY_PORT) {
   });
   
   return server;
+}
+
+function autoDiscoverModelsOnStartup() {
+  const config = loadConfig();
+  const { sources } = require('./models');
+  const enabled = Object.keys(sources).filter(k => sources[k]?.url && !sources[k]?.cliOnly);
+  const { getAllApiKeys } = require('./config');
+  for (const key of enabled) {
+    if (sources[key]?.noKeyRequired) {
+      discoverProviderModels(key, '').catch(() => {});
+    } else {
+      const keys = getAllApiKeys(config, key);
+      if (keys.length > 0) {
+        discoverProviderModels(key, keys[0]).catch(() => {});
+      }
+    }
+  }
+  console.log('[Auto] 模型自动发现已启动（后台运行）');
 }
 
 module.exports = {
