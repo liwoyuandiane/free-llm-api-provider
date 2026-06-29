@@ -2401,7 +2401,7 @@ async function handleTestSingleKey(req, res) {
 
 // [Fix 2026-06-24] 共享默认测试模型映射，供 "测试" 和 "检查" 两个按钮使用
 const DEFAULT_TEST_MODELS = {
-  nvidia: 'deepseek-ai/deepseek-v3.2',
+  nvidia: 'meta/llama-3.1-8b-instruct',
   groq: 'llama-3.1-8b-instant',
   cerebras: 'llama3.1-8b',
   googleai: 'gemma-3-27b-it',
