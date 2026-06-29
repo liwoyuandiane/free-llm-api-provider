@@ -32,7 +32,7 @@
 <h1 align="center">free-llm-api-provider</h1>
 
 <p align="center">
-  <b>A self-contained local LLM proxy with automatic failover across 24 free AI providers and 130+ models.</b>
+  <b>A self-contained local LLM proxy with automatic failover across 24 free AI providers, 130+ static models + 2800+ synced models.</b>
   <br>
   Install once, configure keys, forget about it.
 </p>

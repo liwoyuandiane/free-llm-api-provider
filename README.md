@@ -32,7 +32,7 @@
 <h1 align="center">free-llm-api-provider</h1>
 
 <p align="center">
-  <b>自带 24 个免费 AI 提供商、130+ 模型的本地 LLM 代理，自动故障切换，零外部依赖。</b>
+  <b>自带 24 个免费 AI 提供商、130+ 静态模型 + 2800+ 同步模型的本地 LLM 代理，自动故障切换，零外部依赖。</b>
   <br>
   装一次，配好 Key，就不用再操心了。
 </p>
@@ -53,7 +53,7 @@
 - **自动故障切换** — 429/500/超时 → 自动换下一个提供商
 - **粘性路由** — 同一个提供商成功后持续使用，失败才切换（更快响应）
 - **多 Key 支持** — 一个提供商配多个 Key，逐个尝试再切换
-- **130+ 静态模型 + 2800+ 同步模型** — 覆盖 NVIDIA、Groq、OpenRouter、Cerebras 等 24 个提供商
+- **130+ 静态模型 + 2800+ 同步模型** — 覆盖 NVIDIA、Groq、OpenRouter、Cerebras 等 24 个提供商（通过 `flap sync` 从 litellm 同步）
 - **等级路由** — `tier-splus`（旗舰）→ `tier-b`（默认），健康分覆盖等级
 - **Web 管理后台** — `http://localhost:4002/admin` 浏览器管理 Provider、Key
 - **实时状态面板** — `flap status` 显示实时健康、延时和配额

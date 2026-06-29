@@ -1,7 +1,7 @@
 {
   "name": "free-llm-api-provider",
   "version": "1.0.0",
-  "description": "Local OpenAI-compatible proxy with automatic failover across 25+ free LLM providers. Zero external dependencies.",
+  "description": "Local OpenAI-compatible proxy with automatic failover across 24 free LLM providers. Zero external dependencies.",
   "keywords": [
     "llm",
     "proxy",
@@ -15,11 +15,11 @@
     "nvidia",
     "openrouter"
   ],
-  "homepage": "https://github.com/alexjm19/free-llm-api-provider",
-  "bugs": "https://github.com/alexjm19/free-llm-api-provider/issues",
+  "homepage": "https://github.com/liwoyuandiane/free-llm-api-provider",
+  "bugs": "https://github.com/liwoyuandiane/free-llm-api-provider/issues",
   "license": "MIT",
-  "author": "Alex JM",
-  "funding": "https://github.com/sponsors/alexjm19",
+  "author": "liwoyuandiane",
+  "funding": "https://github.com/sponsors/liwoyuandiane",
   "files": [
     "src/",
     "LICENSE",

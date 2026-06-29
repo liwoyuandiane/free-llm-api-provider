@@ -4,7 +4,7 @@
  * Serves a single-page admin panel at /admin and REST API at /api/admin/*
  */
 
-const crypto = require('crypto');
+const _crypto = require('crypto');
 
 // Login rate limiting (in-memory, 15 min window, 10 attempts max)
 const LOGIN_RATE_WINDOW = 15 * 60 * 1000;
@@ -2521,8 +2521,7 @@ function requireAuthApi(req, res) {
     try {
       const key = dbGetServerApiKey();
       if (key && token.length === key.length) {
-        const crypto = require('crypto');
-        if (crypto.timingSafeEqual(Buffer.from(token), Buffer.from(key))) {
+        if (_crypto.timingSafeEqual(Buffer.from(token), Buffer.from(key))) {
           return { username: 'admin', auth: 'apikey' };
         }
       }
@@ -2566,10 +2565,10 @@ async function handleExportConfig(req, res) {
 
   // 使用 PBKDF2 + AES-256-GCM 加密
   try {
-    const salt = crypto.randomBytes(16);
-    const iv = crypto.randomBytes(12);
-    const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha512');
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const salt = _crypto.randomBytes(16);
+    const iv = _crypto.randomBytes(12);
+    const key = _crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha512');
+    const cipher = _crypto.createCipheriv('aes-256-gcm', key, iv);
     let encrypted = cipher.update(JSON.stringify(exportData), 'utf8', 'hex');
     encrypted += cipher.final('hex');
     const tag = cipher.getAuthTag().toString('hex');
@@ -2605,8 +2604,8 @@ async function handleImportConfig(req, res) {
     const salt = Buffer.from(data.salt, 'hex');
     const iv = Buffer.from(data.iv, 'hex');
     const tag = Buffer.from(data.tag, 'hex');
-    const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha512');
-    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    const key = _crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha512');
+    const decipher = _crypto.createDecipheriv('aes-256-gcm', key, iv);
     decipher.setAuthTag(tag);
     let decoded = decipher.update(data.data, 'hex', 'utf8');
     decoded += decipher.final('utf8');
