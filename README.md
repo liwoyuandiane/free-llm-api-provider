@@ -1,7 +1,7 @@
 <!--
 ╔══════════════════════════════════════════════════════════════╗
 ║  free-llm-api-provider                                     ║
-║  Local LLM proxy with auto-failover across 25+ free providers ║
+║  Local LLM proxy with auto-failover across 24 free providers ║
 ╚══════════════════════════════════════════════════════════════╝
 -->
 
@@ -32,7 +32,7 @@
 <h1 align="center">free-llm-api-provider</h1>
 
 <p align="center">
-  <b>自带 25+ 免费 AI 提供商、238+ 模型的本地 LLM 代理，自动故障切换，零外部依赖。</b>
+  <b>自带 24 个免费 AI 提供商、130+ 模型的本地 LLM 代理，自动故障切换，零外部依赖。</b>
   <br>
   装一次，配好 Key，就不用再操心了。
 </p>
@@ -53,7 +53,7 @@
 - **自动故障切换** — 429/500/超时 → 自动换下一个提供商
 - **粘性路由** — 同一个提供商成功后持续使用，失败才切换（更快响应）
 - **多 Key 支持** — 一个提供商配多个 Key，逐个尝试再切换
-- **238+ 静态模型 + 2800+ 同步模型** — 覆盖 NVIDIA、Groq、OpenRouter、Cerebras 等 27+ 提供商
+- **130+ 静态模型 + 2800+ 同步模型** — 覆盖 NVIDIA、Groq、OpenRouter、Cerebras 等 24 个提供商
 - **等级路由** — `tier-splus`（旗舰）→ `tier-b`（默认），健康分覆盖等级
 - **Web 管理后台** — `http://localhost:4002/admin` 浏览器管理 Provider、Key
 - **实时状态面板** — `flap status` 显示实时健康、延时和配额
@@ -67,24 +67,30 @@
 
 | # | 提供商 | 模型数 | 免费额度 | 环境变量 |
 |---|--------|--------|----------|----------|
-| 1 | NVIDIA NIM | 13 | ~40 RPM | `NVIDIA_API_KEY` |
-| 2 | Groq | 8 | 30 RPM, 1K-14.4K/天 | `GROQ_API_KEY` |
+| 1 | NVIDIA NIM | 13 | ~40 RPM, 无需信用卡 | `NVIDIA_API_KEY` |
+| 2 | Groq | 8 | 30-50 RPM, 无需信用卡 | `GROQ_API_KEY` |
 | 3 | Cerebras | 4 | 30 RPM, 100万 token/天 | `CEREBRAS_API_KEY` |
-| 4 | OpenRouter | 25 | 50/天 免费, 1K/天 ($10) | `OPENROUTER_API_KEY` |
-| 5 | SambaNova | 13 | 开发版慷慨 | `SAMBANOVA_API_KEY` |
-| 6 | Hyperbolic | 13 | $1 免费额度 | `HYPERBOLIC_API_KEY` |
-| 7 | Cloudflare | 15 | 1万 neurons/天 | `CLOUDFLARE_API_TOKEN` |
-| 8 | Google AI Studio | 6 | 14.4K/天 | `GOOGLE_API_KEY` |
-| 9 | ZAI | 7 | 慷慨配额 | `ZAI_API_KEY` |
-| 10 | Scaleway | 10 | 100万 免费 token | `SCALEWAY_API_KEY` |
-| 11 | SiliconFlow | 6 | 100/天 + $1 额度 | `SILICONFLOW_API_KEY` |
-| 12 | **GitHub Models** 🆕 | 7 | 有速率限制 | `GITHUB_TOKEN` |
-| 13 | **Cohere** 🆕 | 4 | 有免费额度 | `COHERE_API_KEY` |
-| 14 | **Reka** 🆕 | 3 | 有免费额度 | `REKA_API_KEY` |
-| 15 | **Pollinations** 🆕 | 3 | 无需 Key | — |
-| 16 | **LLM7** 🆕 | 4 | 无需 Key | — |
-| 17 | **MiniMax** 🆕 | 同步模型 | 有免费额度 | — |
-| 18 | + 9 个更多 | | | |
+| 4 | OpenRouter | 25 | 50/天免费 | `OPENROUTER_API_KEY` |
+| 5 | Google AI Studio | 6 | 14.4K 请求/天 | `GOOGLE_API_KEY` |
+| 6 | ZAI (智谱) | 7 | 慷慨免费配额 | `ZAI_API_KEY` |
+| 7 | Cloudflare AI | 15 | 1万 neurons/天 | `CLOUDFLARE_API_TOKEN` |
+| 8 | SiliconFlow | 6 | 100 请求/天 + $1 额度 | `SILICONFLOW_API_KEY` |
+| 9 | OVHcloud AI | 8 | 2 请求/分/IP 免 Key | `OVH_AI_ENDPOINTS_ACCESS_TOKEN` |
+| 10 | Mistral (Codestral) | 1 | 30 RPM, 2000/天 | `CODESTRAL_API_KEY` |
+| 11 | Hugging Face | 2 | 约 $0.10/月免费额度 | `HUGGINGFACE_API_KEY` |
+| 12 | GitHub Models | 7 | 有速率限制 | `GITHUB_TOKEN` |
+| 13 | Cohere | 4 | 免费试用 | `COHERE_API_KEY` |
+| 14 | Reka | 3 | 免费额度 | `REKA_API_KEY` |
+| 15 | Ollama Cloud | 6 | 约 10-20M token/月 | `OLLAMA_API_KEY` |
+| 16 | OpenCode Zen | 7 | 免费促销模型（轮换） | — |
+| 17 | Pollinations | 3 | **无需 API Key** | — |
+| 18 | LLM7 | 4 | **无需 API Key** | — |
+| 19 | Kilo Gateway | 3 | **200/小时/IP（无需 Key）** | — |
+| 20 | AI Horde | 0 | **社区驱动，匿名可用（慢）** | — |
+| 21 | Agnes AI | 0 | 免费额度 | `AGNES_API_KEY` |
+| 22 | Routeway | 0 | 免费额度 | `ROUTEWAY_API_KEY` |
+| 23 | BazaarLink | 0 | 免费额度 | `BAZAARLINK_API_KEY` |
+| 24 | AI Native Studio | 0 | 免费额度 | `AINATIVE_API_KEY` |
 
 > 通过 `flap sync` 可同步 litellm 目录（2800+ 个模型，100+ 提供商映射）
 
@@ -301,13 +307,13 @@ Groq key 3 → 200 ✅  ← 停留在此直到失败
 
 | 来源 | 数量 | SWE-bench 评分 | 更新方式 |
 |------|------|-----------|----------|
-| **静态模型** | 238 个 | ✅ 有 | 随代码更新 |
+| **静态模型** | 130+ 个 | ✅ 有 | 随代码更新 |
 | **同步模型** | 797 个 | ❌ 无（自动分级） | 每 24 小时自动同步 litellm 目录 |
 | **用户自定义** | 不限 | ✅ 手动设置 | 管理后台设置 |
 
 **同步模型自动分级规则**：根据模型名称（如 claude、gpt-4、gemini 等）和上下文窗口大小，自动分配 S+ 到 C 等级。管理员可在管理后台手动调整。
 
-**SWE-bench 评分**：目前仅 238 个静态模型带有 SWE-bench 评分。评分数据来自公开的 SWE-bench 论文和社区评测，需手动同步到代码中。同步模型由于缺少 SWE-bench 数据，采用基于模型名称和上下文窗口的自动分级。
+**SWE-bench 评分**：目前仅静态模型带有 SWE-bench 评分。评分数据存储在 `swe-bench.json` 中，启动时自动同步到数据库。同步模型由于缺少 SWE-bench 数据，采用基于模型名称和上下文窗口的自动分级。
 
 **等级含义：**
 
@@ -387,7 +393,7 @@ docker run -e DATA_DIR=/app/data -v $(pwd):/app/data ...
 - **CLI + 配置**：纯 Node.js，零运行时依赖
 - **SQLite 数据库**：存储配置、Key、速率限制、会话等（`node:sqlite`，Node 22.5+）
 - **Web 管理后台**：代理内置 `/admin`，浏览器管理
-- **模型目录**：238 个静态模型 + litellm 同步 764 个模型
+- **模型目录**：130+ 个静态模型 + litellm 同步模型
 - **模型自动发现**：探测提供商 `/v1/models` 端点发现新模型
 - **健康检查器**：实时 Ping + 限流头配额提取
 - **代理**：HTTP 代理 + 健康路由 + 粘性提供商 + 故障切换
@@ -403,7 +409,7 @@ docker run -e DATA_DIR=/app/data -v $(pwd):/app/data ...
 
 **模型数据**：
 - **litellm 模型目录** — 通过 `flap sync` 从 [litellm 的 model_prices_and_context_window.json](https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json) 同步，包含 2800+ 模型的上下文窗口、定价、视觉支持等信息
-- **静态模型目录** — 内置 238 个经过筛选的模型，覆盖 25+ 提供商的基础能力
+- **静态模型目录** — 内置 130+ 个经过筛选的模型，覆盖 24 个提供商的基础能力
 - **模型自动发现** — 后台自动探测提供商 `/v1/models` 端点，发现并注册新模型
 - **用户自定义** — 管理后台支持添加自定义提供商和模型
 
@@ -417,7 +423,7 @@ docker run -e DATA_DIR=/app/data -v $(pwd):/app/data ...
 - [litellm](https://github.com/BerriAI/litellm) — 企业级 LLM 网关，社区驱动的模型目录提供了详尽的模型元数据（上下文窗口、定价、视觉支持等），是本项目模型同步功能的核心数据来源，其架构设计也启发了本项目的高级路由策略
 - [free-coding-models](https://github.com/alexjm19/free-coding-models) — 静态模型目录和等级分类的原始参考，为本项目初始 238 个模型提供了基础
 - [OpenRouter](https://openrouter.ai) — 优秀的 AI 模型聚合平台，提供了模型自动发现的参考实现
-- 所有免费 AI 提供商 — NVIDIA、Groq、Cerebras、SambaNova、Replicate、DeepInfra 等，为开发者提供了宝贵的免费 AI 算力
+- 所有免费 AI 提供商 — NVIDIA、Groq、Cerebras、OpenRouter 等，为开发者提供了宝贵的免费 AI 算力
 
 ## 许可证
 

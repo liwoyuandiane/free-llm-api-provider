@@ -1,7 +1,7 @@
 <!--
 ╔══════════════════════════════════════════════════════════════╗
 ║  free-llm-api-provider                                     ║
-║  Local LLM proxy with auto-failover across 25+ free providers ║
+║  Local LLM proxy with auto-failover across 24 free providers ║
 ╚══════════════════════════════════════════════════════════════╝
 -->
 
@@ -32,7 +32,7 @@
 <h1 align="center">free-llm-api-provider</h1>
 
 <p align="center">
-  <b>A self-contained local LLM proxy with automatic failover across 25+ free AI providers and 238+ models.</b>
+  <b>A self-contained local LLM proxy with automatic failover across 24 free AI providers and 130+ models.</b>
   <br>
   Install once, configure keys, forget about it.
 </p>
@@ -53,7 +53,7 @@
 - **Auto-failover**: 429/500/timeout → switch provider automatically
 - **Sticky provider**: Once a provider works, keeps using it until it fails (faster response)
 - **Multi-key support**: Multiple keys per provider, tries all before failing over
-- **238+ static models + 2800+ synced models** across 27+ providers (NVIDIA, Groq, OpenRouter, Cerebras, etc.)
+- **130+ static models + 2800+ synced models** across 24 providers (NVIDIA, Groq, OpenRouter, Cerebras, etc.)
 - **Tier-based routing**: `tier-splus` (elite) → `tier-b` (default), health scores override tiers
 - **Web Admin UI**: Browser-based management at `http://localhost:4002/admin`
 - **Real-time status dashboard**: `flap status` shows live provider health, latency, quota
@@ -68,23 +68,30 @@
 
 | # | Provider | Models | Free Tier | Env Var |
 |---|----------|--------|-----------|---------|
-| 1 | NVIDIA NIM | 13 | ~40 RPM | `NVIDIA_API_KEY` |
-| 2 | Groq | 8 | 30 RPM, 1K-14.4K/day | `GROQ_API_KEY` |
+| 1 | NVIDIA NIM | 13 | ~40 RPM, no CC | `NVIDIA_API_KEY` |
+| 2 | Groq | 8 | 30-50 RPM, no CC | `GROQ_API_KEY` |
 | 3 | Cerebras | 4 | 30 RPM, 1M tokens/day | `CEREBRAS_API_KEY` |
-| 4 | OpenRouter | 25 | 50/day free, 1K/day ($10) | `OPENROUTER_API_KEY` |
-| 5 | SambaNova | 13 | Dev tier generous | `SAMBANOVA_API_KEY` |
-| 6 | Hyperbolic | 13 | $1 free credits | `HYPERBOLIC_API_KEY` |
-| 7 | Cloudflare | 15 | 10K neurons/day | `CLOUDFLARE_API_TOKEN` |
-| 8 | Google AI Studio | 6 | 14.4K/day | `GOOGLE_API_KEY` |
-| 9 | ZAI | 7 | Generous quota | `ZAI_API_KEY` |
-| 10 | Scaleway | 10 | 1M free tokens | `SCALEWAY_API_KEY` |
-| 11 | SiliconFlow | 6 | 100/day + $1 credits | `SILICONFLOW_API_KEY` |
-| 12 | **GitHub Models** 🆕 | 7 | Rate limits | `GITHUB_TOKEN` |
-| 13 | **Cohere** 🆕 | 4 | Free tier | `COHERE_API_KEY` |
-| 14 | **Reka** 🆕 | 3 | Free tier | `REKA_API_KEY` |
-| 15 | **Pollinations** 🆕 | 3 | No key needed | — |
-| 16 | **LLM7** 🆕 | 4 | No key needed | — |
-| 17 | + 10 more | | | |
+| 4 | OpenRouter | 25 | 50/day free | `OPENROUTER_API_KEY` |
+| 5 | Google AI Studio | 6 | 14.4K requests/day | `GOOGLE_API_KEY` |
+| 6 | ZAI (Zhipu AI) | 7 | Generous free quota | `ZAI_API_KEY` |
+| 7 | Cloudflare AI | 15 | 10K neurons/day | `CLOUDFLARE_API_TOKEN` |
+| 8 | SiliconFlow | 6 | 100/day + $1 credits | `SILICONFLOW_API_KEY` |
+| 9 | OVHcloud AI | 8 | 2 req/min/IP free keyless | `OVH_AI_ENDPOINTS_ACCESS_TOKEN` |
+| 10 | Mistral (Codestral) | 1 | 30 RPM, 2K/day | `CODESTRAL_API_KEY` |
+| 11 | Hugging Face | 2 | ~$0.10/month free | `HUGGINGFACE_API_KEY` |
+| 12 | GitHub Models | 7 | Rate limited | `GITHUB_TOKEN` |
+| 13 | Cohere | 4 | Free trial | `COHERE_API_KEY` |
+| 14 | Reka | 3 | Free tier | `REKA_API_KEY` |
+| 15 | Ollama Cloud | 6 | ~10-20M tokens/month | `OLLAMA_API_KEY` |
+| 16 | OpenCode Zen | 7 | Free promo models (rotating) | — |
+| 17 | Pollinations | 3 | **No API key needed** | — |
+| 18 | LLM7 | 4 | **No API key needed** | — |
+| 19 | Kilo Gateway | 3 | **200/hr/IP (no key)** | — |
+| 20 | AI Horde | 0 | **Community, anonymous (slow)** | — |
+| 21 | Agnes AI | 0 | Free tier | `AGNES_API_KEY` |
+| 22 | Routeway | 0 | Free tier | `ROUTEWAY_API_KEY` |
+| 23 | BazaarLink | 0 | Free tier | `BAZAARLINK_API_KEY` |
+| 24 | AI Native Studio | 0 | Free tier | `AINATIVE_API_KEY` |
 
 > Run `flap sync` to sync 790+ models from litellm catalog across 18 providers.
 
@@ -299,13 +306,13 @@ Model tiers come from three sources:
 
 | Source | Count | SWE-bench Score | Update Method |
 |--------|-------|-----------------|---------------|
-| **Static models** | 238 | ✅ Yes | With code releases |
+| **Static models** | 130+ | ✅ Yes | With code releases |
 | **Synced models** | 797 | ❌ No (auto-tiered) | Auto-sync every 24h from litellm catalog |
 | **User custom** | Unlimited | ✅ Manual | Admin UI |
 
 **Synced model auto-tiering**: Based on model name patterns (e.g., claude, gpt-4, gemini) and context window size, models are automatically assigned tiers from S+ to C. Admins can manually adjust tiers in the admin UI.
 
-**SWE-bench scores**: Currently only the 238 static models have SWE-bench scores. These come from published SWE-bench papers and community evaluations. Synced models use auto-tiering based on model names and context windows since SWE-bench data is not available from the litellm catalog.
+**SWE-bench scores**: Currently only the static models have SWE-bench scores. Score data is stored in `swe-bench.json` and synced to the database on startup. Synced models use auto-tiering based on model names and context windows since SWE-bench data is not available from the litellm catalog.
 
 **Tier guide:**
 
@@ -385,7 +392,7 @@ docker run -e DATA_DIR=/app/data -v $(pwd):/app/data ...
 - **CLI + Config**: Pure Node.js, zero runtime dependencies
 - **SQLite Database**: Config, keys, rate limits, sessions (Node 22.5+ built-in)
 - **Web Admin UI**: Built-in browser management at `/admin`
-- **Model Catalog**: 238 static models + 764 synced from litellm
+- **Model Catalog**: 130+ static models + synced from litellm
 - **Model Auto-Discovery**: Probe provider `/v1/models` endpoints
 - **Health Checker**: Real-time ping + quota extraction from rate limit headers
 - **Proxy**: HTTP proxy with health-aware routing + sticky provider + failover
@@ -401,7 +408,7 @@ This project integrates model data from multiple sources:
 
 **Model Data**:
 - **litellm Model Catalog** — Synced via `flap sync` from [litellm's model_prices_and_context_window.json](https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json), containing 2800+ models with context windows, pricing, vision support, etc.
-- **Static Model Catalog** — Built-in 238 curated models covering 25+ providers
+- **Static Model Catalog** — Built-in 130+ curated models covering 24 providers
 - **Model Auto-Discovery** — Background probing of provider `/v1/models` endpoints
 - **User Custom** — Admin UI supports adding custom providers and models
 
@@ -415,7 +422,7 @@ Thanks to the following open-source projects for inspiration and data:
 - [litellm](https://github.com/BerriAI/litellm) — Enterprise-grade LLM gateway with a community-driven model catalog providing comprehensive model metadata (context windows, pricing, vision flags). The core data source for model sync, and its architecture inspired advanced routing strategies.
 - [free-coding-models](https://github.com/alexjm19/free-coding-models) — Original reference for the static model catalog and tier classification.
 - [OpenRouter](https://openrouter.ai) — Excellent AI model aggregation platform that inspired model auto-discovery.
-- All free AI providers — NVIDIA, Groq, Cerebras, SambaNova, Replicate, DeepInfra and many more, providing valuable free AI compute for developers.
+- All free AI providers — NVIDIA, Groq, Cerebras, OpenRouter and many more, providing valuable free AI compute for developers.
 
 ## License
 

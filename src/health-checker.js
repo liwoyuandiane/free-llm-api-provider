@@ -39,16 +39,6 @@ function resolveCloudflareUrl(url) {
 function buildPingRequest(apiKey, modelId, providerKey, url) {
   const apiModelId = providerKey === 'zai' ? modelId.replace(/^zai\//, '') : modelId;
 
-  if (providerKey === 'replicate') {
-    const replicateHeaders = { 'Content-Type': 'application/json', Prefer: 'wait=4' };
-    if (apiKey) replicateHeaders.Authorization = `Token ${apiKey}`;
-    return {
-      url,
-      headers: replicateHeaders,
-      body: { version: modelId, input: { prompt: 'hi' } },
-    };
-  }
-
   if (providerKey === 'cloudflare') {
     const headers = { 'Content-Type': 'application/json' };
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;

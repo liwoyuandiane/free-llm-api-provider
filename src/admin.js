@@ -2055,20 +2055,10 @@ const DEFAULT_TEST_MODELS = {
   groq: 'llama-3.1-8b-instant',
   cerebras: 'llama3.1-8b',
   googleai: 'gemma-3-27b-it',
-  deepinfra: 'meta-llama/Meta-Llama-3.1-8B-Instruct',
   codestral: 'codestral-latest',
   zai: 'zai/glm-4.5-flash',
-  sambanova: 'Meta-Llama-3.1-8B-Instruct',
   openrouter: 'meta-llama/llama-3.1-8b-instruct:free',
-  together: 'meta-llama/Llama-3.1-8B-Instruct-Turbo',
-  fireworks: 'accounts/fireworks/models/llama-v3-8b',
-  hyperbolic: 'meta-llama/Meta-Llama-3.1-8B-Instruct',
-  scaleway: 'llama-3.1-8b-instruct',
-  qwen: 'qwen2.5-coder-32b-instruct',
   siliconflow: 'Qwen/Qwen2.5-Coder-32B-Instruct',
-  chutes: 'meta-llama/Meta-Llama-3.1-8B-Instruct',
-  iflow: 'qwen3-32b',
-  opencode: 'llama-3.1-8b-instant',
 };
 
 async function runKeyTest(res, url, provider, apiKey) {

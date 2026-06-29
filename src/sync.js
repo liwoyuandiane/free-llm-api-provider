@@ -28,7 +28,7 @@ const PROVIDER_MAP = {
   'openrouter': 'openrouter',
   'codestral': 'codestral',
   'cloudflare': 'cloudflare',
-  'zai': 'zai',到GitHub了吗？
+  'zai': 'zai',
   
   'ovhcloud': 'ovhcloud',
   'nvidia_nim': 'nvidia',
