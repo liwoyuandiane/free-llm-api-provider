@@ -1210,7 +1210,6 @@ const PROVIDER_LIMITS = {
   ovhcloud: { rpm: 10, rpd: 400 },
   github: { rpm: 15, rpd: 150 },
   cohere: { rpm: 20, rpd: 1000 },
-  reka: { rpm: 10, rpd: 500 },
   pollinations: { rpm: 60, rpd: 10000 },
   llm7: { rpm: 30, rpd: 1000 },
   'ollama-cloud': { rpm: 30, rpd: 10000 },

@@ -70,3 +70,4 @@ backups/
 
 # Test startup script
 start.sh
+.data/backups/

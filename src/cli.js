@@ -19,7 +19,7 @@ const { loadConfig, saveConfig, getApiKey, isProviderEnabled, addApiKey, getEnab
 const { sources, MODELS, ENV_VAR_NAMES, TIER_ORDER, getModelsByTier, getModelsByProvider, getApiProviders } = require('./models');
 const { startProxyServer, PROXY_PORT } = require('./proxy');
 const { startDashboard } = require('./status-dashboard');
-const { runHealthCheck, getHealthyProviders } = require('./health-checker');
+const { runHealthCheck, getHealthyProviders, startHealthChecker } = require('./health-checker');
 const { syncCatalog, exportCatalog, getCatalogUrl } = require('./sync');
 const { getMeta, closeDb } = require('./db');
 
@@ -445,6 +445,8 @@ async function startProxy() {
     console.log('✅ Proxy started on http://localhost:4002');
     console.log('   🌐 Admin UI:  http://localhost:4002/admin');
     console.log(`   🔑 API Key:   ${getServerApiKey(loadConfig())}`);
+    // Health check: 20s delay, then every 30s
+    setTimeout(() => startHealthChecker(config), 20000);
     return true;
   } catch (err) {
     console.error('❌ Failed to start proxy:', err.message);
@@ -880,19 +882,10 @@ Make sure the proxy is running (flap / free-llm-api-provider).
   
   // Default: start proxy (no args or "start")
   if (args.length === 0 || firstArg === 'start') {
-    // Auto-sync catalog on startup
-    syncCatalog().catch(err => console.warn('[CLI] Catalog sync 失败:', err.message));
-    
-    // Auto-sync SWE-bench scores if URL configured
-    try {
-      const sweUrl = getMeta('swe_bench_url') || 'https://raw.githubusercontent.com/liwoyuandiane/free-llm-api-provider/main/swe-bench.json';
-      if (sweUrl) {
-        const { syncSweBenchScores } = require('./sync');
-        syncSweBenchScores(sweUrl).then(n => {
-          if (n > 0) console.log(`[Auto] 已同步 ${n} 个 SWE-bench 评分`);
-        }).catch(() => {});
-      }
-    } catch {}
+    // Auto-sync disabled — only 29 static models by default
+    // syncCatalog().catch(err => console.warn('[CLI] Catalog sync 失败:', err.message));
+
+    // SWE-bench auto-sync disabled
 
     // Auto-assign tiers to discovered models from synced data
     try {
@@ -903,11 +896,11 @@ Make sure the proxy is running (flap / free-llm-api-provider).
       }, 2000); // Slight delay to let SWE-bench sync finish first
     } catch {}
     
-    // Periodic auto-sync every 6 hours (respects SYNC_INTERVAL from sync.js = 24h)
-    const SYNC_CHECK_INTERVAL = 6 * 60 * 60 * 1000; // 6 hours
-    setInterval(() => {
-      syncCatalog().catch(err => console.warn('[CLI] Periodic sync 失败:', err.message));
-    }, SYNC_CHECK_INTERVAL);
+    // Periodic auto-sync disabled
+    // const SYNC_CHECK_INTERVAL = 6 * 60 * 60 * 1000;
+    // setInterval(() => {
+    //   syncCatalog().catch(err => console.warn('[CLI] Periodic sync 失败:', err.message));
+    // }, SYNC_CHECK_INTERVAL);
     
     const config = loadConfig();
     const enabled = getEnabledProviders(config);

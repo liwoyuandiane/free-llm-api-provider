@@ -1546,20 +1546,16 @@ async function importConfig(){
 /**
  * lS — 加载已保存的 SWE-bench URL
  */
-const SWE_BENCH_DEFAULT_URL = 'https://raw.githubusercontent.com/liwoyuandiane/free-llm-api-provider/main/swe-bench.json';
+
 async function lS(){
-  const r=await api('/swe-bench/url',{method:'GET'});
-  const url = r.url || SWE_BENCH_DEFAULT_URL;
-  document.getElementById('sweBenchUrl').value = url;
-  document.getElementById('sweBenchStatus').textContent = r.lastSyncStr ? '上次同步: '+r.lastSyncStr : '已配置默认 URL，启动时自动同步';
+  try {
+    const r = await api('/swe-bench/url', { method: 'GET' });
+    const urlEl = document.getElementById('sweBenchUrl');
+    const statusEl = document.getElementById('sweBenchStatus');
+    if (urlEl) urlEl.value = r.url || '';
+    if (statusEl) statusEl.textContent = r.lastSyncStr ? 'last sync: ' + r.lastSyncStr : '';
+  } catch {}
 }
-
-// ── 配置生成器 ──
-
-// ── 自动模型定级 ──
-
-let _autoTierPollTimer = null;
-
 async function startAutoTier(){
   const btn=document.getElementById('autoTierBtn');
   const prog=document.getElementById('autoTierProgress');
@@ -2142,14 +2138,15 @@ async function handleAutoTier(req, res) {
   try {
     const discovered = getAllDiscoveredModels();
     for (const dm of discovered) {
-      if (!dm.model_id || !dm.provider) continue;
-      const key = dm.provider + '/' + dm.model_id;
-      if (modelLocks[key]) continue; // Skip locked
-      if (!toGrade.find(m => m.modelId === dm.model_id && m.provider === dm.provider)) {
-        toGrade.push({ modelId: dm.model_id, provider: dm.provider, label: dm.model_id });
+      const modelId = dm.id || dm.model_id || '';
+      const prov = dm.provider || '';
+      if (!modelId || !prov) continue;
+      if (modelLocks[prov + '/' + modelId]) continue;
+      if (!toGrade.find(m => m.modelId === modelId && m.provider === prov)) {
+        toGrade.push({ modelId, provider: prov, label: modelId });
       }
     }
-  } catch {}
+  } catch(e) { console.warn('[AutoTier] Discover error:', e.message); }
 
   if (toGrade.length === 0) {
     return jsonResponse(res, 200, { running: false, message: '没有模型需要定级' });
@@ -2178,9 +2175,9 @@ async function runAutoTierBackground(toGrade) {
     try {
       const tier = inferTierFromModelName(m.modelId);
       setModelTier(m.modelId, m.provider, tier);
-      _autoTierState.ok++;
+
     } catch (e) {
-      _autoTierState.fail++;
+      try { setModelTier(m.modelId, m.provider, 'B'); } catch {}
     }
 
     _autoTierState.completed++;

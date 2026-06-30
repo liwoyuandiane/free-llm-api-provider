@@ -958,7 +958,23 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
   } catch (error) {
     // If error already has status property, it's our formatted error (HTTP error)
     if (error.status !== undefined) {
-      // For 429 and other non-404 errors, throw immediately
+      // Degrade all same-tier models on auth errors (401/403/500+) only
+      if (error.status === 401 || error.status === 403 || error.status >= 500) {
+        try {
+          const { setModelTier, getAllModelTiers } = require('./db');
+          const allTiers = getAllModelTiers();
+          const failedTier = allTiers[provider.key + '/' + selectedModelId];
+          if (failedTier && ['S+','S','A+','A','A-','B+','B'].includes(failedTier)) {
+            const prefix = provider.key + '/';
+            let degraded = 0;
+            for (const [key, tier] of Object.entries(allTiers)) {
+              if (!key.startsWith(prefix) || tier !== failedTier) continue;
+              try { setModelTier(key.substring(prefix.length), provider.key, 'C'); degraded++; } catch {}
+            }
+            if (degraded > 0) console.log(`[Proxy] Degraded ${degraded} ${failedTier} models for ${provider.key} to C (HTTP ${error.status})`);
+          }
+        } catch {}
+      }
       if (error.status !== 404 && error.status !== 410) throw error;
       // For 404/410, try next model
       lastError = error;
@@ -976,6 +992,22 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
       lastError = { status: 0, error: errorMsg, provider: provider.key };
       continue; // try next model
     }
+
+    // Degrade all same-tier models on network errors
+    try {
+      const { setModelTier, getAllModelTiers } = require('./db');
+      const allTiers = getAllModelTiers();
+      const failedTier = allTiers[provider.key + '/' + selectedModelId];
+      if (failedTier && ['S+','S','A+','A','A-','B+','B'].includes(failedTier)) {
+        const prefix = provider.key + '/';
+        let degraded = 0;
+        for (const [key, tier] of Object.entries(allTiers)) {
+          if (!key.startsWith(prefix) || tier !== failedTier) continue;
+          try { setModelTier(key.substring(prefix.length), provider.key, 'C'); degraded++; } catch {}
+        }
+        if (degraded > 0) console.log(`[Proxy] Degraded ${degraded} ${failedTier} models for ${provider.key} to C (timeout)`);
+      }
+    } catch {}
 
     recordFailure(provider.key);
     throw { status: 0, error: errorMsg, provider: provider.key };
@@ -1012,9 +1044,17 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
   // Clean up old rate limit data periodically
   cleanRateLimits();
 
+  // Get session early for sticky session management
+  const sessionId = getSessionId(reqBody);
+  
   // Filter providers based on tier-* request with fallback chain
   const requestedTierAlias = reqBody.model && TIER_ALIAS_MAP[reqBody.model];
   if (requestedTierAlias) {
+    // Clear sticky/active so tier-* gets fresh routing (not history)
+    if (sessionId) {
+      clearActiveProvider(sessionId);
+      try { setStickyProvider(sessionId, { key: '', apiKey: '', expires: 0 }); } catch {}
+    }
     // Try exact tier, then fallback chain (e.g. A+ → A → B+ → B)
     const tiersToTry = [reqBody.model, ...(TIER_FALLBACK[reqBody.model] || [])];
     let resolvedAlias = null;
@@ -1042,7 +1082,6 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
   let chosenProvider = null;
   
   // 0. Sticky session: try the same provider as last time
-  const sessionId = getSessionId(reqBody);
   if (sessionId) {
     const sticky = getStickyProvider(sessionId);
     if (sticky && !isCircuitOpen(sticky.key)) {
@@ -1659,6 +1698,12 @@ function createServer() {
       return;
     }
     
+    // Favicon
+    if (pathname === '/favicon.ico') {
+      res.writeHead(204); res.end();
+      return;
+    }
+
     // Admin web UI and API
     if (pathname.startsWith('/admin') || pathname.startsWith('/api/admin')) {
       const handled = await handleAdminRequest(parsedUrl, req, res);

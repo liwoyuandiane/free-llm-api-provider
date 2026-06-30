@@ -22,18 +22,8 @@ const DB_DIR = process.env.DATA_DIR || DATA_DIR_DEFAULT;
 const LITELLM_URL = 'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
 
 // litellm_provider → our internal provider key mapping
-const PROVIDER_MAP = {
-  'groq': 'groq',
-  'cerebras': 'cerebras',
-  'openrouter': 'openrouter',
-  'codestral': 'codestral',
-  'cloudflare': 'cloudflare',
-  'zai': 'zai',
-  
-  'ovhcloud': 'ovhcloud',
-  'nvidia_nim': 'nvidia',
-  'mistral': 'codestral',
-};
+// PROVIDER_MAP intentionally empty — only 29 static best models by default
+const PROVIDER_MAP = {};
 
 // Last sync tracking
 const SYNC_META_KEY = 'last_catalog_sync';
