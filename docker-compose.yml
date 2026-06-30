@@ -3,9 +3,9 @@ services:
     build: .
     container_name: free-llm-api-provider
     ports:
-      - "0.0.0.0:4002:4002"
+      - "127.0.0.1:4002:4002"
     volumes:
-      - ./:/app/data
+      - ./.data:/app/data
     environment:
       - DATA_DIR=/app/data
       - FLAP_API_KEY=${FLAP_API_KEY}

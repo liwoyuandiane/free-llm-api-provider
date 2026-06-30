@@ -4,3 +4,8 @@ node_modules/
 *.md
 AGENTS.md
 LICENSE
+.data/
+swe-bench.json
+docker-compose.yml
+.github/
+
