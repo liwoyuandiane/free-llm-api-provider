@@ -1227,6 +1227,7 @@ function getModalityBadges(modelId){
   if(/code|coder/.test(l)) b.push('💻');
   return b.length?b.map(x=>'<span style="font-size:11px;margin-left:3px;opacity:0.7" title="'+{'👁️':'Vision','🎤':'Audio','🧠':'Reasoning','📊':'Embedding','💻':'Code'}[x]+'">'+x+'</span>').join(''):'';
 }
+/**
  * tM — 切换单个模型的启用/禁用状态
  * @param {string} mid - 模型 ID
  * @param {string} prov - 提供商
