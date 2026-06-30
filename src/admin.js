@@ -1620,23 +1620,23 @@ function cgGenerate(){
   const fullModel=prov+'/'+model;
   
   const configs={
-    curl: 'curl '+baseUrl+'/chat/completions \\\n  -H "Authorization: Bearer '+key+'" \\\n  -H "Content-Type: application/json" \\\n  -d \'{\n    "model": "'+fullModel+'",\n    "messages": [{"role": "user", "content": "你好"}]\n  }\'',
+    curl: 'curl '+baseUrl+'/chat/completions \\n  -H "Authorization: Bearer '+key+'" \\n  -H "Content-Type: application/json" \\n  -d \\u0027{\\n    "model": "'+fullModel+'",\\n    "messages": [{"role": "user", "content": "你好"}]\\n  }\\u0027',
     
-    python: 'from openai import OpenAI\n\nclient = OpenAI(\n    base_url="'+baseUrl+'",\n    api_key="'+key+'"\n)\n\nresponse = client.chat.completions.create(\n    model="'+fullModel+'",\n    messages=[{"role": "user", "content": "你好"}]\n)\nprint(response.choices[0].message.content)',
+    python: 'from openai import OpenAI\\n\\nclient = OpenAI(\\n    base_url="'+baseUrl+'",\\n    api_key="'+key+'"\\n)\\n\\nresponse = client.chat.completions.create(\\n    model="'+fullModel+'",\\n    messages=[{"role": "user", "content": "你好"}]\\n)\\nprint(response.choices[0].message.content)',
     
-    claude: '# Claude Code 使用此代理\n# 1. 设置环境变量:\nexport ANTHROPIC_BASE_URL='+baseUrl+'\nexport ANTHROPIC_AUTH_TOKEN='+key+'\n\n# 2. 运行:\n# claude',
+    claude: '# Claude Code 使用此代理\\n# 1. 设置环境变量:\\nexport ANTHROPIC_BASE_URL='+baseUrl+'\\nexport ANTHROPIC_AUTH_TOKEN='+key+'\\n\\n# 2. 运行:\\n# claude',
     
-    cursor: '# Cursor 配置\n# 设置 → Models → OpenAI API Key\n# Base URL: '+baseUrl+'\n# API Key: '+key+'\n# Model: '+fullModel+'\n\n# 或 .cursorrules:\n{\n  "model": "'+fullModel+'",\n  "apiBase": "'+baseUrl+'",\n  "apiKey": "'+key+'"\n}',
+    cursor: '# Cursor 配置\\n# 设置 → Models → OpenAI API Key\\n# Base URL: '+baseUrl+'\\n# API Key: '+key+'\\n# Model: '+fullModel+'\\n\\n# 或 .cursorrules:\\n{\\n  "model": "'+fullModel+'",\\n  "apiBase": "'+baseUrl+'",\\n  "apiKey": "'+key+'"\\n}',
     
-    codex: '# Codex CLI\nexport OPENAI_BASE_URL='+baseUrl+'\nexport OPENAI_API_KEY='+key+'\ncodex --model "'+fullModel+'"',
+    codex: '# Codex CLI\\nexport OPENAI_BASE_URL='+baseUrl+'\\nexport OPENAI_API_KEY='+key+'\\ncodex --model "'+fullModel+'"',
     
-    opencode: '// opencode.json\n"provider": {\n  "flap": {\n    "baseUrl": "'+baseUrl+'",\n    "apiKey": "'+key+'",\n    "model": "'+fullModel+'"\n  }\n}',
+    opencode: '// opencode.json\\n"provider": {\\n  "flap": {\\n    "baseUrl": "'+baseUrl+'",\\n    "apiKey": "'+key+'",\\n    "model": "'+fullModel+'"\\n  }\\n}',
     
-    aider: '# .aider.conf.yml\nopenai-api-key: '+key+'\nopenai-api-base: '+baseUrl+'\nopenai-model: '+fullModel,
+    aider: '# .aider.conf.yml\\nopenai-api-key: '+key+'\\nopenai-api-base: '+baseUrl+'\\nopenai-model: '+fullModel,
     
-    cline: '# Cline (VS Code) 配置\n# 设置 → Cline → API Provider: OpenAI Compatible\nBase URL: '+baseUrl+'\nAPI Key: '+key+'\nModel: '+fullModel,
+    cline: '# Cline (VS Code) 配置\\n# 设置 → Cline → API Provider: OpenAI Compatible\\nBase URL: '+baseUrl+'\\nAPI Key: '+key+'\\nModel: '+fullModel,
     
-    openwebui: '# Open WebUI → Settings → Connections\nOpenAI API URL: '+baseUrl+'\nOpenAI API Key: '+key,
+    openwebui: '# Open WebUI → Settings → Connections\\nOpenAI API URL: '+baseUrl+'\\nOpenAI API Key: '+key,
   };
   
   el.textContent=configs[client]||'';
