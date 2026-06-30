@@ -4781,6 +4781,108 @@
       "tier": "S",
       "swe_score": "59.2%",
       "ctx": "128k"
+    },
+    {
+      "id": "modelscope/qwen3-5-35b-a3b",
+      "tier": "A",
+      "swe_score": "",
+      "ctx": "131k"
+    },
+    {
+      "id": "modelscope/qwen3-5-27b",
+      "tier": "B",
+      "swe_score": "",
+      "ctx": "131k"
+    },
+    {
+      "id": "modelscope/qwen-image",
+      "tier": "B",
+      "swe_score": "",
+      "ctx": "131k"
+    },
+    {
+      "id": "ai21/jamba-large-1-7",
+      "tier": "B",
+      "swe_score": "",
+      "ctx": "256k"
+    },
+    {
+      "id": "ai21/jamba-mini-2",
+      "tier": "C",
+      "swe_score": "",
+      "ctx": "256k"
+    },
+    {
+      "id": "deepseek/deepseek-chat",
+      "tier": "S",
+      "swe_score": "",
+      "ctx": "128k"
+    },
+    {
+      "id": "deepseek/deepseek-reasoner",
+      "tier": "S",
+      "swe_score": "",
+      "ctx": "128k"
+    },
+    {
+      "id": "aion-labs/aion-2-5",
+      "tier": "B",
+      "swe_score": "",
+      "ctx": "128k"
+    },
+    {
+      "id": "aion-labs/aion-2-0",
+      "tier": "C",
+      "swe_score": "",
+      "ctx": "128k"
+    },
+    {
+      "id": "aion-labs/aion-rp-1-0-8b",
+      "tier": "C",
+      "swe_score": "",
+      "ctx": "32k"
+    },
+    {
+      "id": "glhf/meta-llama/Meta-Llama-3.1-70B-Instruct",
+      "tier": "B",
+      "swe_score": "",
+      "ctx": "131k"
+    },
+    {
+      "id": "glhf/mistralai/Mixtral-8x7B-Instruct-v0.1",
+      "tier": "C",
+      "swe_score": "",
+      "ctx": "32k"
+    },
+    {
+      "id": "nscale/llama-3-3-70b-instruct",
+      "tier": "B",
+      "swe_score": "",
+      "ctx": "128k"
+    },
+    {
+      "id": "nscale/deepseek-r1-distill-llama-70b",
+      "tier": "B",
+      "swe_score": "",
+      "ctx": "128k"
+    },
+    {
+      "id": "nebius/qwen3-235b-a22b",
+      "tier": "A",
+      "swe_score": "",
+      "ctx": "128k"
+    },
+    {
+      "id": "xai/grok-2",
+      "tier": "A",
+      "swe_score": "",
+      "ctx": "131k"
+    },
+    {
+      "id": "xai/grok-2-mini",
+      "tier": "B",
+      "swe_score": "",
+      "ctx": "131k"
     }
   ],
   "updated": "2026-06-30"

@@ -418,6 +418,8 @@ This project integrates model data from multiple sources:
 
 Thanks to the following open-source projects for inspiration and data:
 
+- [awesome-freellm-apis](https://github.com/open-free-llm-api/awesome-freellm-apis) — Free LLM API directory that provided valuable reference for provider info and Base URLs
+- [freellm.net](https://freellm.net) — Real-time free model rankings and API key directory
 - [freellmapi](https://github.com/tashfeenahmed/freellmapi) — Minimalist API key rotation and proxy implementation that inspired this project's health-aware routing and high-availability design
 - [litellm](https://github.com/BerriAI/litellm) — Enterprise-grade LLM gateway with a community-driven model catalog providing comprehensive model metadata (context windows, pricing, vision flags). The core data source for model sync, and its architecture inspired advanced routing strategies.
 - [free-coding-models](https://github.com/alexjm19/free-coding-models) — Original reference for the static model catalog and tier classification.

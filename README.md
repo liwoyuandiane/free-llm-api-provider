@@ -419,6 +419,8 @@ docker run -e DATA_DIR=/app/data -v $(pwd):/app/data ...
 
 感谢以下开源项目对本项目的启发和帮助：
 
+- [awesome-freellm-apis](https://github.com/open-free-llm-api/awesome-freellm-apis) — 免费 LLM API 目录，为本项目的提供商信息和 Base URL 提供了重要参考
+- [freellm.net](https://freellm.net) — 实时更新的免费模型排行榜和 API 密钥目录
 - [freellmapi](https://github.com/tashfeenahmed/freellmapi) — 极简的 API Key 轮换与代理实现，为本项目的健康感知路由和高可用设计提供了重要参考
 - [litellm](https://github.com/BerriAI/litellm) — 企业级 LLM 网关，社区驱动的模型目录提供了详尽的模型元数据（上下文窗口、定价、视觉支持等），是本项目模型同步功能的核心数据来源，其架构设计也启发了本项目的高级路由策略
 - [free-coding-models](https://github.com/alexjm19/free-coding-models) — 静态模型目录和等级分类的原始参考，为本项目初始 238 个模型提供了基础

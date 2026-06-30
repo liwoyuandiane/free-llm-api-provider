@@ -72,6 +72,56 @@ const rekaModels = [
   ['reka-flash-20250219', 'Reka Flash', '128k'],
 ];
 
+// ── New providers from awesome-freellm-apis ──
+// ModelScope (55 free models, registration required)
+const modelscopeModels = [
+  ['qwen/qwen3.5-35b-a3b', 'Qwen3.5 35B-A3B', '131k'],
+  ['qwen/qwen3.5-27b', 'Qwen3.5 27B', '131k'],
+  ['qwen/qwen-image', 'Qwen-Image', '131k'],
+];
+
+// DeepSeek (2 free models)
+const deepseekModels = [
+  ['deepseek-chat', 'DeepSeek Chat (V3.2)', '128k'],
+  ['deepseek-reasoner', 'DeepSeek Reasoner (R1)', '128k'],
+];
+
+// AI21 Labs (2 free models)
+const ai21Models = [
+  ['jamba-large-1-7', 'Jamba Large 1.7', '256k'],
+  ['jamba-mini-2', 'Jamba Mini 2', '256k'],
+];
+
+// Aion Labs (5 free models)
+const aionModels = [
+  ['aion-2-5', 'Aion 2.5', '128k'],
+  ['aion-2-0', 'Aion 2.0', '128k'],
+  ['aion-rp-1-0-8b', 'Aion-RP 1.0 8B', '32k'],
+];
+
+// Glhf.chat (2 free models, unlimited)
+const glhfModels = [
+  ['meta-llama/Meta-Llama-3.1-70B-Instruct', 'Llama 3.1 70B', '131k'],
+  ['mistralai/Mixtral-8x7B-Instruct-v0.1', 'Mixtral 8x7B', '32k'],
+];
+
+// Nscale (2 free models)
+const nscaleModels = [
+  ['llama-3-3-70b-instruct', 'Llama 3.3 70B', '128k'],
+  ['deepseek-r1-distill-llama-70b', 'DeepSeek R1 Distill Llama 70B', '128k'],
+];
+
+// Nebius (1 free model)
+const nebiusModels = [
+  ['qwen3-235b-a22b', 'Qwen3 235B-A22B', '128k'],
+];
+
+// xAI / Grok (2 free models)
+const xaiModels = [
+  ['grok-2', 'Grok-2', '131k'],
+  ['grok-2-mini', 'Grok-2 Mini', '131k'],
+];
+
 // ── Empty arrays for providers served by litellm sync ──
 const nvidiaNim = []; const groq = []; const cerebras = [];
 const openrouter = []; const huggingface = []; const codestral = [];
@@ -111,6 +161,14 @@ const sources = {
   'ainative-studio': { name: 'AI Native Studio', url: null, models: ainativeStudio },
   'aihorde': { name: 'AI Horde', url: null, models: aihorde, noKeyRequired: true },
   'anthropic': { name: 'Anthropic', url: 'https://api.anthropic.com/v1/messages', models: anthropicModels, anthropicFormat: true },
+  'modelscope': { name: 'ModelScope', url: 'https://api-inference.modelscope.cn/v1/chat/completions', models: modelscopeModels },
+  'deepseek': { name: 'DeepSeek', url: 'https://api.deepseek.com/v1/chat/completions', models: deepseekModels },
+  'ai21': { name: 'AI21 Labs', url: 'https://api.ai21.com/studio/v1/chat/completions', models: ai21Models },
+  'aion-labs': { name: 'Aion Labs', url: 'https://api.aionlabs.ai/v1/chat/completions', models: aionModels },
+  'glhf': { name: 'Glhf.chat', url: 'https://glhf.chat/api/openai/v1/chat/completions', models: glhfModels },
+  'nscale': { name: 'Nscale', url: 'https://inference.api.nscale.com/v1/chat/completions', models: nscaleModels },
+  'nebius': { name: 'Nebius', url: 'https://api.studio.nebius.com/v1/chat/completions', models: nebiusModels },
+  'xai': { name: 'xAI (Grok)', url: 'https://api.x.ai/v1/chat/completions', models: xaiModels },
 };
 
 // ── Flat MODELS array (for backward compatibility) ──
@@ -138,6 +196,10 @@ const ENV_VAR_NAMES = {
   ovhcloud: 'OVH_AI_ENDPOINTS_ACCESS_TOKEN', github: 'GITHUB_TOKEN',
   cohere: 'COHERE_API_KEY', reka: 'REKA_API_KEY',
   pollinations: null, llm7: null, 'opencode-zen': null,
+  modelscope: 'MODELSCOPE_API_KEY', deepseek: 'DEEPSEEK_API_KEY',
+  ai21: 'AI21_API_KEY', 'aion-labs': 'AION_API_KEY',
+  glhf: 'GLHF_API_KEY', nscale: 'NSCALE_API_KEY', nebius: 'NEBIUS_API_KEY',
+  xai: 'XAI_API_KEY',
 };
 
 // Context windows per provider
@@ -145,6 +207,9 @@ const PROVIDER_CONTEXT_LIMITS = {
   nvidia: 131072, groq: 131072, cerebras: 131072, googleai: 1048576,
   openrouter: 262144, codestral: 262144, github: 131072, cohere: 262144,
   cloudflare: 131072, pollinations: 4096, llm7: 4096,
+  modelscope: 131072, deepseek: 131072, ai21: 262144,
+  'aion-labs': 131072, glhf: 131072, nscale: 131072, nebius: 131072,
+  xai: 131072,
 };
 
 // ── Helper functions ──

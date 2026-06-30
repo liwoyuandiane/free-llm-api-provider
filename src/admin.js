@@ -60,7 +60,7 @@ const _SIGNUP_URLS = {
   cohere: 'https://dashboard.cohere.com/api-keys',
   reka: 'https://platform.reka.ai/',
   pollinations: 'https://pollinations.ai/',
-  llm7: 'https://llm7.io/',
+  llm7: 'https://token.llm7.io',
   'opencode-zen': 'https://opencode.ai/auth',
   'ollama-cloud': 'https://ollama.com/settings/keys',
   'kilo-gateway': 'https://app.kilo.ai/',
@@ -70,6 +70,14 @@ const _SIGNUP_URLS = {
   'ainative-studio': 'https://ainative.studio/',
   'aihorde': 'https://aihorde.net/register',
   'anthropic': 'https://console.anthropic.com/',
+  'modelscope': 'https://modelscope.cn/settings/api',
+  'deepseek': 'https://platform.deepseek.com/api_keys',
+  'ai21': 'https://studio.ai21.com/account/api-key',
+  'aion-labs': 'https://aionlabs.ai/api-keys',
+  'glhf': 'https://glhf.chat/user/settings',
+  'nscale': 'https://nscale.dev/account/api-keys',
+  'nebius': 'https://console.nebius.ai/settings/api-keys',
+  'xai': 'https://console.x.ai/',
 };
 const _FREE_TIER_INFO = {
   nvidia: '40 RPM (no credit card)',
@@ -108,6 +116,14 @@ const _FREE_TIER_INFO = {
   'ainative-studio': 'Free tier with API key',
   'aihorde': 'Community-powered, anonymous (slow)',
   'anthropic': 'Pay-as-you-go (API key required)',
+  'modelscope': '2000 RPD (no credit card)',
+  'deepseek': 'Dynamic rate limit (no credit card)',
+  'ai21': '200 RPM free tier',
+  'aion-labs': '15 RPM free tier',
+  'glhf': 'Unlimited free tier',
+  'nscale': 'Fair-use free tier',
+  'nebius': 'Tier-based free quota',
+  'xai': '$25/month free credits',
 };
 
 /**
@@ -657,7 +673,7 @@ tr:hover td{background:var(--card-hover)}
   <div class="c">
     <div class="fr"><label>提供商</label><select id="cgProvider" onchange="cgRefreshModels()" style="flex:1"><option value="">选择...</option></select></div>
     <div class="fr"><label>模型</label><select id="cgModel" style="flex:1"><option value="">先选择提供商</option></select></div>
-    <div class="fr"><label>客户端</label><select id="cgClient" onchange="cgGenerate()" style="flex:1"><option value="curl">cURL</option><option value="python">Python OpenAI SDK</option><option value="claude">Claude Code</option><option value="cursor">Cursor</option></select></div>
+    <div class="fr"><label>客户端</label><select id="cgClient" onchange="cgGenerate()" style="flex:1"><option value="curl">cURL</option><option value="python">Python OpenAI SDK</option><option value="claude">Claude Code</option><option value="cursor">Cursor</option><option value="codex">Codex CLI</option><option value="opencode">OpenCode</option><option value="aider">Aider</option><option value="cline">Cline</option><option value="openwebui">Open WebUI</option></select></div>
   </div>
   <div class="c">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><span class="ct">配置代码</span><button class="btn btn-sm" onclick="cgCopy()">复制</button></div>
@@ -1607,9 +1623,19 @@ function cgGenerate(){
     
     python: 'from openai import OpenAI\n\nclient = OpenAI(\n    base_url="'+baseUrl+'",\n    api_key="'+key+'"\n)\n\nresponse = client.chat.completions.create(\n    model="'+fullModel+'",\n    messages=[{"role": "user", "content": "你好"}]\n)\nprint(response.choices[0].message.content)',
     
-    claude: '# Claude Code 使用此代理\n# 1. 设置环境变量:\nexport ANTHROPIC_BASE_URL='+baseUrl+'\nexport ANTHROPIC_AUTH_TOKEN='+key+'\n\n# 2. 运行:\n# claude\n\n# 注: 模型将使用代理的等级路由 (tier-splus ~ tier-c)',
+    claude: '# Claude Code 使用此代理\n# 1. 设置环境变量:\nexport ANTHROPIC_BASE_URL='+baseUrl+'\nexport ANTHROPIC_AUTH_TOKEN='+key+'\n\n# 2. 运行:\n# claude',
     
-    cursor: '# Cursor 配置\n# 设置 → Models → OpenAI API Key\n# Base URL: '+baseUrl+'\n# API Key: '+key+'\n# Model: '+fullModel+'\n\n# 或 .cursorrules 中添加:\n{\n  "model": "'+fullModel+'",\n  "apiBase": "'+baseUrl+'",\n  "apiKey": "'+key+'"\n}',
+    cursor: '# Cursor 配置\n# 设置 → Models → OpenAI API Key\n# Base URL: '+baseUrl+'\n# API Key: '+key+'\n# Model: '+fullModel+'\n\n# 或 .cursorrules:\n{\n  "model": "'+fullModel+'",\n  "apiBase": "'+baseUrl+'",\n  "apiKey": "'+key+'"\n}',
+    
+    codex: '# Codex CLI\nexport OPENAI_BASE_URL='+baseUrl+'\nexport OPENAI_API_KEY='+key+'\ncodex --model "'+fullModel+'"',
+    
+    opencode: '// opencode.json\n"provider": {\n  "flap": {\n    "baseUrl": "'+baseUrl+'",\n    "apiKey": "'+key+'",\n    "model": "'+fullModel+'"\n  }\n}',
+    
+    aider: '# .aider.conf.yml\nopenai-api-key: '+key+'\nopenai-api-base: '+baseUrl+'\nopenai-model: '+fullModel,
+    
+    cline: '# Cline (VS Code) 配置\n# 设置 → Cline → API Provider: OpenAI Compatible\nBase URL: '+baseUrl+'\nAPI Key: '+key+'\nModel: '+fullModel,
+    
+    openwebui: '# Open WebUI → Settings → Connections\nOpenAI API URL: '+baseUrl+'\nOpenAI API Key: '+key,
   };
   
   el.textContent=configs[client]||'';

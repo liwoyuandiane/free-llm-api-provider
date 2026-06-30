@@ -1630,6 +1630,26 @@ function createServer() {
           created: Math.floor((m.discoveredAt || Date.now()) / 1000),
         });
       }
+
+      // Append static models from models.js (for providers not in litellm)
+      const syncedIds = new Set(synced.map(m => m.id));
+      const staticModels = [];
+      for (const [key, s] of Object.entries(sources)) {
+        for (const m of (s.models || [])) {
+          const mid = key + '/' + m[0];
+          if (!syncedIds.has(mid)) {
+            staticModels.push({ id: mid, provider: key });
+          }
+        }
+      }
+      for (const m of staticModels) {
+        data.push({
+          id: m.id,
+          object: 'model',
+          owned_by: m.provider || 'static',
+          created: 1700000000,
+        });
+      }
       
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
