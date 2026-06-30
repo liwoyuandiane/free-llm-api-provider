@@ -3,7 +3,7 @@ services:
     build: .
     container_name: free-llm-api-provider
     ports:
-      - "127.0.0.1:4002:4002"
+      - "0.0.0.0:4002:4002"
     volumes:
       - ./.data:/app/data
     environment:
