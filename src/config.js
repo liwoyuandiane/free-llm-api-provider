@@ -377,20 +377,6 @@ function removeApiKey(config, providerKey) {
   return true;
 }
 
-function listApiKeys(config, providerKey) {
-  // Prefer SQLite
-  try {
-    const dbKeys = getProviderKeys(providerKey);
-    if (dbKeys.length > 0) return dbKeys;
-  } catch {}
-
-  // Fall back to JSON config
-  const raw = config?.apiKeys?.[providerKey];
-  if (Array.isArray(raw)) return raw.filter(k => typeof k === 'string' && k.length > 0);
-  if (typeof raw === 'string' && raw.length > 0) return [raw];
-  return [];
-}
-
 function getEnabledProviders(config) {
   const enabled = [];
   const { sources } = require('./models');
@@ -448,8 +434,6 @@ function ensureServerApiKey(config) {
 
 module.exports = {
   CONFIG_PATH,
-  CONFIG_DIR,
-  ENV_VARS,
   loadConfig,
   saveConfig,
   getApiKey,
@@ -457,7 +441,6 @@ module.exports = {
   isProviderEnabled,
   addApiKey,
   removeApiKey,
-  listApiKeys,
   getEnabledProviders,
   generateServerApiKey,
   getServerApiKey,

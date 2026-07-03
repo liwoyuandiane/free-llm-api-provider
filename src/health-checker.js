@@ -297,6 +297,16 @@ async function runHealthCheck(config) {
   return results;
 }
 
+function persistHealthState() {
+  try {
+    for (const [key, state] of healthState.entries()) {
+      saveHealthState(key, state);
+    }
+  } catch (e) {
+    console.warn('[Health] 持久化健康状态失败:', e.message);
+  }
+}
+
 function startHealthChecker(config) {
   // Load previous health state from DB (so data survives refresh)
   try {
@@ -317,15 +327,12 @@ function startHealthChecker(config) {
   runHealthCheck(config).catch(err => console.error('[Health] Initial check error:', err instanceof Error ? err.message : String(err)));
   let persistCounter = 0;
   const interval = setInterval(() => {
-    // Cleanup stale entries (providers no longer in sources)
     for (const key of healthState.keys()) {
       if (!sources[key] || !sources[key].url || sources[key].cliOnly) {
         healthState.delete(key);
       }
     }
     runHealthCheck(config).catch(err => console.error('[Health] Interval check error:', err instanceof Error ? err.message : String(err)));
-
-    // Persist to DB every ~30 min (every 60th check at 30s interval)
     persistCounter++;
     if (persistCounter >= 60) {
       persistCounter = 0;
@@ -333,22 +340,11 @@ function startHealthChecker(config) {
     }
   }, HEALTH_CHECK_INTERVAL);
 
-  // Also persist on process exit
   process.on('exit', () => { persistHealthState(); });
   process.on('SIGINT', () => { persistHealthState(); });
   process.on('SIGTERM', () => { persistHealthState(); });
 
   return interval;
-}
-
-function persistHealthState() {
-  try {
-    for (const [key, state] of healthState.entries()) {
-      saveHealthState(key, state);
-    }
-  } catch (e) {
-    console.warn('[Health] 持久化健康状态失败:', e.message);
-  }
 }
 
 function getHealthyProviders() {
@@ -383,22 +379,9 @@ function getHealthyProviders() {
   return providers;
 }
 
-function isProviderHealthy(providerKey) {
-  const state = healthState.get(providerKey);
-  if (!state) return true;
-  return state.overallScore > 30;
-}
-
-function getProviderHealth(providerKey) {
-  return healthState.get(providerKey) || null;
-}
-
 module.exports = {
-  startHealthChecker,
   getHealthState,
   getHealthyProviders,
-  isProviderHealthy,
-  getProviderHealth,
   runHealthCheck,
-  PING_TIMEOUT,
+  startHealthChecker,
 };

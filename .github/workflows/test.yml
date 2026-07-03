@@ -51,9 +51,9 @@ jobs:
           echo "Checking module exports..."
           node -e "
             const checks = {
-              'config': ['loadConfig', 'getEnabledProviders', 'ENV_VARS', 'CONFIG_PATH'],
+              'config': ['loadConfig', 'getEnabledProviders', 'CONFIG_PATH'],
               'models': ['MODELS', 'sources', 'getModelLimits'],
-              'sync': ['startSync'],
+              'sync': ['syncCatalog', 'getSyncedModels'],
             };
             let ok = 0, fail = 0;
             for (const [mod, exports] of Object.entries(checks)) {

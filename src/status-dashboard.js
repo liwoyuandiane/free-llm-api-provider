@@ -190,5 +190,4 @@ async function startDashboard() {
 
 module.exports = {
   startDashboard,
-  renderDashboard,
 };

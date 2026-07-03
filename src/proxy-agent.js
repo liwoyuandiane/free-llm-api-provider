@@ -235,4 +235,4 @@ async function proxyFetch(urlStr, init = {}) {
   }
 }
 
-module.exports = { proxyFetch, getProxyUrl, shouldBypass };
+module.exports = { proxyFetch };

@@ -312,15 +312,15 @@ function createTables() {
       created_at TEXT DEFAULT (datetime('now'))
     )
   `);
-  // 迁移：为已有数据库添加 is_default_pw 列
-  try { db.exec('ALTER TABLE admin_users ADD COLUMN is_default_pw INTEGER NOT NULL DEFAULT 0'); } catch {}
   // 迁移：修复现有用户 — 如果密码仍是默认密码则标记 is_default_pw = 1
   try {
     const admin = db.prepare('SELECT username, password_hash FROM admin_users LIMIT 1').get();
-    if (admin && !admin.is_default_pw && verifyPassword(DEFAULT_ADMIN_PASSWORD, admin.password_hash)) {
+    if (admin && admin.is_default_pw === 0 && verifyPassword(DEFAULT_ADMIN_PASSWORD, admin.password_hash)) {
       db.prepare('UPDATE admin_users SET is_default_pw = 1 WHERE username = ?').run(admin.username);
     }
   } catch {}
+  // 迁移：为已有数据库添加 is_default_pw 列
+  try { db.exec('ALTER TABLE admin_users ADD COLUMN is_default_pw INTEGER NOT NULL DEFAULT 0'); } catch {}
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -924,12 +924,6 @@ function setModelEnabled(modelId, provider, enabled) {
   db.prepare('INSERT OR REPLACE INTO model_states (model_id, provider, enabled) VALUES (?, ?, ?)').run(modelId, provider || '', enabled ? 1 : 0);
 }
 
-function isModelEnabled(modelId, provider) {
-  const row = db.prepare('SELECT enabled FROM model_states WHERE model_id = ? AND provider = ?').get(modelId, provider || '');
-  if (!row) return true; // Default: enabled
-  return row.enabled === 1;
-}
-
 function getDisabledModels(provider) {
   // Returns list of model IDs that are disabled for this provider
   const disabled = db.prepare('SELECT model_id FROM model_states WHERE provider = ? AND enabled = 0').all(provider || '');
@@ -1078,21 +1072,9 @@ function getHealthStateAll() {
   } catch { return []; }
 }
 
-function clearHealthState() {
-  db.exec('DELETE FROM health_state');
-}
-
-function getHealthStateLastCheck(provider) {
-  try {
-    const r = db.prepare('SELECT last_check FROM health_state WHERE provider = ?').get(provider);
-    return r ? r.last_check : null;
-  } catch { return null; }
-}
-
-/**
- * Apply SWE-bench tiers to discovered models that don't have a tier assigned.
- * Scans swe-bench.json (or sync_models) and sets model_tiers for matching discovered models.
- */
+// ============================================================================
+// SWE-bench tier application for discovered models
+// ============================================================================
 function applyTiersToDiscoveredModels() {
   try {
     const discovered = getDiscoveredModels();
@@ -1439,87 +1421,6 @@ function logRequest({ provider, model, latencyMs, success, tokensIn, tokensOut, 
 }
 
 /**
- * 获取分析概览
- * @param {number} [hours=24] - 统计时间范围（小时）
- * @returns {object} 统计概览
- */
-function getAnalyticsSummary(hours = 24) {
-  const rows = db.prepare(`
-    SELECT 
-      COUNT(*) as total_requests,
-      SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as successful,
-      AVG(CASE WHEN success = 1 THEN latency_ms ELSE NULL END) as avg_latency,
-      SUM(tokens_in) as total_tokens_in,
-      SUM(tokens_out) as total_tokens_out
-    FROM request_log 
-    WHERE created_at > datetime('now', '-' || ? || ' hours')
-  `).get(hours);
-  return rows || {};
-}
-
-/**
- * 按提供商分组统计
- * @param {number} [hours=24] - 统计时间范围（小时）
- * @returns {Array} 按提供商统计的结果
- */
-function getAnalyticsByProvider(hours = 24) {
-  const rows = db.prepare(`
-    SELECT 
-      provider,
-      COUNT(*) as count,
-      SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success,
-      ROUND(AVG(CASE WHEN success = 1 THEN latency_ms ELSE NULL END), 1) as avg_latency,
-      SUM(tokens_in) as total_tokens_in,
-      SUM(tokens_out) as total_tokens_out
-    FROM request_log 
-    WHERE created_at > datetime('now', '-' || ? || ' hours')
-    GROUP BY provider
-    ORDER BY count DESC
-  `).all(hours);
-  return rows;
-}
-
-/**
- * 获取时间序列数据（按小时）
- * @param {number} [hours=24] - 统计时间范围（小时）
- * @returns {Array} 时间序列数据
- */
-function getAnalyticsTimeSeries(hours = 24) {
-  const rows = db.prepare(`
-    SELECT 
-      strftime('%Y-%m-%d %H:00', created_at) as hour,
-      COUNT(*) as count,
-      SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as success,
-      ROUND(AVG(CASE WHEN success = 1 THEN latency_ms ELSE NULL END), 1) as avg_latency
-    FROM request_log 
-    WHERE created_at > datetime('now', '-' || ? || ' hours')
-    GROUP BY hour
-    ORDER BY hour ASC
-  `).all(hours);
-  return rows;
-}
-
-/**
- * 获取最常用模型排行
- * @param {number} [hours=24] - 统计时间范围（小时）
- * @param {number} [limit=10] - 返回数量限制
- * @returns {Array} 模型排行
- */
-function getTopModels(hours = 24, limit = 10) {
-  const rows = db.prepare(`
-    SELECT 
-      COALESCE(NULLIF(model, ''), request_model) as model_name,
-      COUNT(*) as count
-    FROM request_log 
-    WHERE created_at > datetime('now', '-' || ? || ' hours')
-    GROUP BY model_name
-    ORDER BY count DESC
-    LIMIT ?
-  `).all(hours, limit);
-  return rows;
-}
-
-/**
  * 清理旧的分析日志
  * @param {number} [retentionDays=90] - 保留天数
  */
@@ -1541,7 +1442,6 @@ module.exports = {
   getServerApiKey,
   ensureServerApiKey,
   regenerateServerApiKey,
-  getOrCreateEncryptionKey,
   encryptApiKey,
   decryptApiKey,
   getProviderKeys,
@@ -1564,7 +1464,6 @@ module.exports = {
   getMeta,
   setMeta,
   setModelEnabled,
-  isModelEnabled,
   getDisabledModels,
   getAllModelStates,
   getCustomProviders,
@@ -1590,8 +1489,6 @@ module.exports = {
   getModelsWithTier,
   saveHealthState,
   getHealthStateAll,
-  clearHealthState,
-  getHealthStateLastCheck,
   applyTiersToDiscoveredModels,
   recordRateLimit,
   isRateLimited,
@@ -1602,14 +1499,7 @@ module.exports = {
   setStickyProvider,
   isVisionModel,
   logRequest,
-  getAnalyticsSummary,
-  getAnalyticsByProvider,
   getAllProviderPriorities,
   setProviderPriority,
   deleteProviderPriority,
-  getAnalyticsTimeSeries,
-  getTopModels,
-  cleanupOldAnalytics,
-  loadEnvFile,
-  saveEnvVar,
 };

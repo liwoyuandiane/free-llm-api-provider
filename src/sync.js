@@ -437,8 +437,5 @@ module.exports = {
   getAllSyncedModels,
   getSyncedProviderUrl,
   getCatalogUrl,
-  setCatalogUrl,
-  ensureSyncTables,
-  applyLitellmCatalog,
   syncSweBenchScores,
 };

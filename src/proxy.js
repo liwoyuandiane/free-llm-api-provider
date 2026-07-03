@@ -159,7 +159,48 @@ function jsonError(res, status, error, provider) {
   res.end(JSON.stringify(body));
 }
 
-// Simple cookie parser
+/**
+ * Authenticate request: check Bearer token or session cookie
+ */
+function authenticateRequest(req) {
+  const authHeader = req.headers.authorization || '';
+  const bearerMatch = authHeader.match(/^bearer\s+(.+)$/i);
+  const apiKey = bearerMatch ? bearerMatch[1].trim() : authHeader.trim();
+
+  if (apiKey && timingSafeEqual(apiKey, getServerKey())) return true;
+
+  // Check session cookie (for admin UI playground requests)
+  try {
+    const cookies = parseCookies(req);
+    if (cookies.flap_session && validateSession(cookies.flap_session)) return true;
+  } catch {}
+  return false;
+}
+
+/**
+ * Read request body with size limit. Returns Promise<string> or rejects with status/error.
+ */
+function readBody(req, res, maxSize = 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    let bodyDestroyed = false;
+    req.on('data', chunk => {
+      if (bodyDestroyed) return;
+      body += chunk;
+      if (body.length > maxSize) {
+        bodyDestroyed = true;
+        req.pause();
+        if (!res.headersSent) {
+          jsonError(res, 413, 'Request body too large');
+        }
+        reject({ status: 413, error: 'Request body too large' });
+      }
+    });
+    req.on('end', () => {
+      if (!bodyDestroyed) resolve(body);
+    });
+  });
+}
 function parseCookies(req) {
   const cookieHeader = req.headers.cookie || '';
   const cookies = {};
@@ -1280,64 +1321,25 @@ function createServer() {
       return;
     }
     
-    // Chat completions
+    // Chat completions (OpenAI-compatible)
     if (pathname === '/v1/chat/completions' && req.method === 'POST') {
-      // Validate API key (case-insensitive Bearer prefix per HTTP spec)
-      // Also accept admin session cookie for same-origin requests
-      const authHeader = req.headers.authorization || '';
-      const bearerMatch = authHeader.match(/^bearer\s+(.+)$/i);
-      const apiKey = bearerMatch ? bearerMatch[1].trim() : authHeader.trim();
-
-      let isAuthed = false;
-
-      // 1. Check Bearer token against server key
-      if (apiKey && timingSafeEqual(apiKey, getServerKey())) {
-        isAuthed = true;
-      }
-
-      // 2. Check session cookie (for admin UI playground requests)
-      if (!isAuthed) {
-        try {
-          const cookies = parseCookies(req);
-          if (cookies.flap_session) {
-            const session = validateSession(cookies.flap_session);
-            if (session) isAuthed = true;
-          }
-        } catch {}
-      }
-
-      if (!isAuthed) {
+      if (!authenticateRequest(req)) {
         jsonError(res, 401, 'Invalid API key or session');
         return;
       }
-      
-      // Read body (with size limit to prevent memory exhaustion)
-      let body = '';
-      let bodyDestroyed = false;
-      const MAX_PROXY_BODY = 1024 * 1024; // 1MB
-      req.on('data', chunk => {
-        if (bodyDestroyed) return;
-        body += chunk;
-        if (body.length > MAX_PROXY_BODY) {
-          bodyDestroyed = true;
-          req.pause();
-          if (!res.headersSent) {
-            jsonError(res, 413, 'Request body too large');
-          }
-        }
-      });
-      req.on('end', async () => {
-        if (bodyDestroyed) return;
-        try {
-          const requestBody = JSON.parse(body);
-          const isStream = isStreaming(requestBody);
-          
-          if (isStream) {
-            // STREAMING MODE: Try providers without sending headers first
-            let providerName = 'unknown';
-            let headersSent = false;
 
-            const onChunk = (chunk, isDone, provider) => {
+      let body;
+      try { body = await readBody(req, res); } catch { return; }
+      try {
+        const requestBody = JSON.parse(body);
+        const isStream = isStreaming(requestBody);
+
+        if (isStream) {
+          // STREAMING MODE: Try providers without sending headers first
+          let providerName = 'unknown';
+          let headersSent = false;
+
+          const onChunk = (chunk, isDone, provider) => {
               if (provider && providerName === 'unknown') {
                 providerName = provider;
               }
@@ -1420,7 +1422,6 @@ function createServer() {
             jsonError(res, 502, err.message || 'All providers failed');
           }
         }
-      });
       return;
     }
 
@@ -1428,58 +1429,37 @@ function createServer() {
     // Anthropic-compatible /v1/messages endpoint
     // ============================================================
     if (pathname === '/v1/messages' && req.method === 'POST') {
-      const authHeader = req.headers.authorization || '';
-      const bearerMatch = authHeader.match(/^bearer\s+(.+)$/i);
-      const apiKey = bearerMatch ? bearerMatch[1].trim() : authHeader.trim();
-
-      let isAuthed = false;
-      if (apiKey && timingSafeEqual(apiKey, getServerKey())) { isAuthed = true; }
-      if (!isAuthed) {
-        // Also accept x-api-key (Anthropic native auth)
-        const xApiKey = req.headers['x-api-key'];
-        if (xApiKey && timingSafeEqual(xApiKey, getServerKey())) { isAuthed = true; }
+      if (!authenticateRequest(req)) {
+        jsonError(res, 401, 'Invalid API key');
+        return;
       }
-      if (!isAuthed) {
-        try {
-          const cookies = parseCookies(req);
-          if (cookies.flap_session && validateSession(cookies.flap_session)) isAuthed = true;
-        } catch {}
-      }
-      if (!isAuthed) { jsonError(res, 401, 'Invalid API key'); return; }
 
-      let body = '';
-      let bodyDestroyed = false;
-      req.on('data', chunk => {
-        if (bodyDestroyed) return;
-        body += chunk;
-        if (body.length > 1024 * 1024) { bodyDestroyed = true; req.pause(); if (!res.headersSent) jsonError(res, 413, 'Request body too large'); }
-      });
-      req.on('end', async () => {
-        if (bodyDestroyed) return;
-        try {
-          const anthroBody = JSON.parse(body);
-          // Convert Anthropic request → OpenAI internal format
-          const openaiBody = {
-            model: anthroBody.model || 'tier-b',
-            messages: [],
-            max_tokens: anthroBody.max_tokens || 4096,
-            stream: !!anthroBody.stream,
-          };
-          if (anthroBody.system) openaiBody.messages.push({ role: 'system', content: anthroBody.system });
-          if (Array.isArray(anthroBody.messages)) {
-            for (const m of anthroBody.messages) {
-              let content = '';
-              if (typeof m.content === 'string') content = m.content;
-              else if (Array.isArray(m.content)) content = m.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
-              openaiBody.messages.push({ role: m.role || 'user', content });
-            }
+      let body;
+      try { body = await readBody(req, res); } catch { return; }
+      try {
+        const anthroBody = JSON.parse(body);
+        // Convert Anthropic request → OpenAI internal format
+        const openaiBody = {
+          model: anthroBody.model || 'tier-b',
+          messages: [],
+          max_tokens: anthroBody.max_tokens || 4096,
+          stream: !!anthroBody.stream,
+        };
+        if (anthroBody.system) openaiBody.messages.push({ role: 'system', content: anthroBody.system });
+        if (Array.isArray(anthroBody.messages)) {
+          for (const m of anthroBody.messages) {
+            let content = '';
+            if (typeof m.content === 'string') content = m.content;
+            else if (Array.isArray(m.content)) content = m.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
+            openaiBody.messages.push({ role: m.role || 'user', content });
           }
-          if (!openaiBody.messages.length) { jsonError(res, 400, 'Missing messages'); return; }
+        }
+        if (!openaiBody.messages.length) { jsonError(res, 400, 'Missing messages'); return; }
 
-          const isStream = openaiBody.stream;
-          if (isStream) {
-            let providerName = 'unknown', headersSent = false, started = false;
-            const onChunk = (chunk, done, prov) => {
+        const isStream = openaiBody.stream;
+        if (isStream) {
+          let providerName = 'unknown', headersSent = false, started = false;
+          const onChunk = (chunk, done, prov) => {
               if (prov) providerName = prov;
               if (!headersSent) {
                 headersSent = true;
@@ -1532,14 +1512,13 @@ function createServer() {
             };
             res.writeHead(200, { 'Content-Type': 'application/json', 'X-Provider': result.provider });
             res.end(JSON.stringify(anthroResp));
-          }
-        } catch (err) {
-          const isJson = err instanceof SyntaxError && err.message.includes('JSON');
-          if (isJson) jsonError(res, 400, 'Invalid request body');
-          else if (err.error) jsonError(res, 502, err.error, err.provider);
-          else jsonError(res, 502, err.message || 'All providers failed');
         }
-      });
+      } catch (err) {
+        const isJson = err instanceof SyntaxError && err.message.includes('JSON');
+        if (isJson) jsonError(res, 400, 'Invalid request body');
+        else if (err.error) jsonError(res, 502, err.error, err.provider);
+        else jsonError(res, 502, err.message || 'All providers failed');
+      }
       return;
     }
 
@@ -1628,21 +1607,10 @@ function createServer() {
     if (pathname === '/v1/models' && req.method === 'GET') {
       const { getAllDiscoveredModels } = require('./admin');
       const { getAllSyncedModels } = require('./sync');
-      
-      // Tier alias models
-      const tiers = [
-        { id: 'tier-splus', name: 'S+ Tier (Elite)', desc: '70%+ SWE-bench - Best for complex refactors' },
-        { id: 'tier-s', name: 'S Tier (Excellent)', desc: '60-70% SWE-bench - Reliable for most tasks' },
-        { id: 'tier-aplus', name: 'A+ Tier (Very Capable)', desc: '50-60% SWE-bench - Great alternatives' },
-        { id: 'tier-a', name: 'A Tier (Solid)', desc: '40-50% SWE-bench - Good general use' },
-        { id: 'tier-aminus', name: 'A- Tier (Decent)', desc: '35-40% SWE-bench - Simpler tasks' },
-        { id: 'tier-bplus', name: 'B+ Tier (Capable)', desc: '30-35% SWE-bench - Small tasks' },
-        { id: 'tier-b', name: 'B Tier (Entry)', desc: '20-30% SWE-bench - Default fallback' },
-        { id: 'tier-c', name: 'C Tier (Basic)', desc: '<20% SWE-bench - Last resort' },
-      ];
-      
-      const data = tiers.map(t => ({
-        id: t.id,
+
+      // Tier alias models — derived from TIER_ALIAS_MAP
+      const data = Object.keys(TIER_ALIAS_MAP).map(alias => ({
+        id: alias,
         object: 'model',
         owned_by: 'free-llm-api-provider',
         created: 1700000000,

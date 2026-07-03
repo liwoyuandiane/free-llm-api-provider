@@ -126,6 +126,11 @@ function getModelsByProvider(providerKey) {
 function getModelsByTier(tier) { return MODELS.filter(m => m[2] === tier); }
 function getProviderForModel(modelId) { const found = MODELS.find(m => m[0] === modelId); return found ? found[5] : null; }
 function isProviderShutdown(providerKey) { return false; }
+function getApiProviders() {
+  return Object.entries(sources)
+    .filter(([key, data]) => data.url && !data.cliOnly && !isProviderShutdown(key))
+    .map(([key, _]) => key);
+}
 
 function getModelLimits(modelId) {
   const providerKey = getProviderForModel(modelId);
@@ -147,4 +152,8 @@ function getModelLimits(modelId) {
 
 const TIER_ORDER = ['S+', 'S', 'A+', 'A', 'A-', 'B+', 'B', 'C', 'error'];
 
-module.exports = { sources, MODELS, ENV_VAR_NAMES, getModelsByProvider, getModelsByTier, getProviderForModel, isProviderShutdown, getModelLimits, PROVIDER_CONTEXT_LIMITS, TIER_ORDER };
+module.exports = {
+  sources, MODELS, ENV_VAR_NAMES, TIER_ORDER,
+  getModelsByTier, getModelsByProvider, getApiProviders,
+  getModelLimits, isProviderShutdown, PROVIDER_CONTEXT_LIMITS,
+};
