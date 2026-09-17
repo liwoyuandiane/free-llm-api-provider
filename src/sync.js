@@ -203,7 +203,7 @@ function applyLitellmCatalog(data) {
       const lowerId = modelId.toLowerCase();
       const namePart = modelId.split('/').pop()?.toLowerCase() || '';
       
-      // S+ tier: known frontier models
+      // S tier: known frontier models
       if (/claude.*(?:opus|sonnet|4|3\.5)/.test(lowerId) || 
           /gpt-4(?:o|\.)?(?!.*mini)/.test(lowerId) ||
           /gemini.*(?:ultra|2\.0|2\.5)/.test(lowerId) ||
@@ -211,31 +211,31 @@ function applyLitellmCatalog(data) {
           /qwen.*(?:3|max|plus|480|235)/.test(lowerId) ||
           /kimi.*(?:k2|k2\.5)/.test(lowerId) ||
           /minimax.*(?:m2|m2\.5)/.test(lowerId)) {
-        if (/mini|tiny|small|nano/.test(namePart)) tier = 'A+';
+        if (/mini|tiny|small|nano/.test(namePart)) tier = 'A';
         else if (/flash|lite|fast/.test(namePart)) tier = 'A';
-        else tier = 'S+';
+        else tier = 'S';
       } 
-      // S tier: strong models
+      // A tier: strong models
       else if (/claude|gpt-4|gemini|deepseek|qwen|kimi|mistral-large|llama.*(?:70|90|405)/.test(lowerId) ||
                /nemotron|command.*r|ministral.*large/.test(lowerId)) {
-        tier = 'S';
+        tier = 'A';
       }
-      // A+ tier: capable models
+      // B tier: capable models
       else if (/llama|mistral|mixtral|qwen|glm|yandex|phi-3|command/.test(lowerId) ||
                /gemma.*(?:2|27|4)/.test(lowerId)) {
-        if (/mini|tiny|small|nano/.test(namePart)) tier = 'B+';
+        if (/mini|tiny|small|nano/.test(namePart)) tier = 'B';
         else tier = 'A';
       }
-      // B+ tier: good for small tasks
+      // C tier: good for small tasks
       else if (/gemma|phi|granite|falcon|dbrx|solar|aya/.test(lowerId)) {
-        tier = 'B+';
+        tier = 'B';
       }
 
       // Context window bonus: models with large context are likely more capable
       if (info.max_input_tokens) {
         const ctx = info.max_input_tokens;
-        if (ctx >= 1000000 && tier === 'B') tier = 'A-';
-        else if (ctx >= 128000 && tier === 'B') tier = 'B+';
+        if (ctx >= 1000000 && tier === 'B') tier = 'A';
+        else if (ctx >= 128000 && tier === 'B') tier = 'B';
       }
 
       // Store

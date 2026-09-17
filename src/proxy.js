@@ -13,19 +13,19 @@ const { loadConfig, getEnabledProviders, getAllApiKeys, getServerApiKey } = requ
 const { sources, getModelsByProvider, ENV_VAR_NAMES, getModelLimits, isProviderShutdown } = require('./models');
 const { validateSession } = require('./db');
 const { proxyFetch } = require('./proxy-agent');
+const circuitBreaker = require('./circuit-breaker');
+const loadBalancer = require('./load-balancer');
+const rateLimiter = require('./rate-limiter');
+const metrics = require('./metrics');
 
-const TIER_ALIAS_MAP = { 'tier-splus': 'S+', 'tier-s': 'S', 'tier-aplus': 'A+', 'tier-a': 'A', 'tier-aminus': 'A-', 'tier-bplus': 'B+', 'tier-b': 'B', 'tier-c': 'C' };
+const TIER_ALIAS_MAP = { 'auto-s': 'S', 'auto-a': 'A', 'auto-b': 'B', 'auto-c': 'C' };
 
 // Tier fallback chain: if exact tier not available, try the next lower tier
 const TIER_FALLBACK = {
-  'tier-splus': ['tier-s', 'tier-aplus', 'tier-a', 'tier-bplus', 'tier-b'],
-  'tier-s': ['tier-aplus', 'tier-a', 'tier-bplus', 'tier-b'],
-  'tier-aplus': ['tier-a', 'tier-bplus', 'tier-b'],
-  'tier-a': ['tier-bplus', 'tier-b'],
-  'tier-aminus': ['tier-bplus', 'tier-b'],
-  'tier-bplus': ['tier-b'],
-  'tier-b': ['tier-c'],
-  'tier-c': ['tier-b', 'tier-bplus', 'tier-a', 'tier-aplus', 'tier-s'],
+  'auto-s': ['auto-a', 'auto-b', 'auto-c'],
+  'auto-a': ['auto-b', 'auto-c'],
+  'auto-b': ['auto-c'],
+  'auto-c': ['auto-b', 'auto-a', 'auto-s'],
 };
 
 // Token estimation (rough: ~4 chars per token for English, ~2 for CJK)
@@ -101,7 +101,7 @@ function checkContextFit(provider, reqBody) {
   return { fits: false, tokens: estimatedTokens, limit: firstLimits.context, model: provider.models[0] || '' };
 }
 const { getHealthyProviders } = require('./health-checker');
-const { handleAdminRequest, discoverProviderModels } = require('./admin');
+const { handleAdminRequest, discoverProviderModels, getAllDiscoveredModels } = require('./admin');
 const { initDatabase, getDisabledModels, getCustomProviders, getCustomProviderModels, getServerApiKey: dbGetServerApiKey, getModelsWithTier, getAllModelTiers, isRateLimited, recordRateLimit, setCooldown, cleanRateLimits, getStickyProvider, setStickyProvider, isVisionModel, logRequest, getAllProviderPriorities, getDiscoveredModelsByProvider, getProviderLimits } = require('./db');
 
 /** 代理端口，默认 4002，可通过环境变量 FLAP_PORT 或 PORT 覆盖 */
@@ -145,8 +145,15 @@ function getServerKey() {
   } catch (err) {
     console.warn('[Proxy] getServerKey config error:', err.message);
   }
-  // Last resort: generate a new key
-  return 'sk-' + crypto.randomBytes(32).toString('hex');
+  // Last resort: generate a new key and persist it
+  const newKey = 'sk-' + crypto.randomBytes(32).toString('hex');
+  console.warn('[Proxy] Generated new server API key (no existing key found). Persisting to DB...');
+  try {
+    const { setMeta } = require('./db');
+    setMeta('generated_api_key', newKey);
+  } catch {}
+  _cachedServerKey = newKey;
+  return newKey;
 }
 
 function invalidateServerKeyCache() { _cachedServerKey = null; }
@@ -214,11 +221,11 @@ function parseCookies(req) {
   return cookies;
 }
 
-// Request timeout per provider (ms)
-const PROVIDER_TIMEOUT = 10000;
+// Request timeout per provider (ms) — 30s handles large-context LLM responses
+const PROVIDER_TIMEOUT = 30000;
 
-// Circuit breaker state
-const circuitBreaker = new Map(); // providerKey -> { failures, lastFailure, open, openedAt, halfOpen }
+// Circuit breaker state - using enhanced CircuitBreaker class
+// const circuitBreaker = new Map(); // providerKey -> { failures, lastFailure, open, openedAt, halfOpen }
 const CIRCUIT_THRESHOLD = 3;
 const CIRCUIT_RESET_MS = 30000;
 /** 速率限制冷却时间 (ms) */
@@ -328,7 +335,7 @@ function getPrioritizedProviders(config, opts = {}) {
   const enabled = getEnabledProviders(config);
   const providers = [];
   
-  const tierPriority = { 'S+': 0, 'S': 1, 'A+': 2, 'A': 3, 'A-': 4, 'B+': 5, 'B': 6, 'C': 7, 'discovered': 8 };
+  const tierPriority = { 'S': 0, 'A': 1, 'B': 2, 'C': 3, 'discovered': 4 };
   
   // Get health data if available
   const healthyProviders = getHealthyProviders();
@@ -389,7 +396,7 @@ function getPrioritizedProviders(config, opts = {}) {
       }
     }
     // Sort models by tier (S+ first, discovered last)
-    const modelTierOrder = { 'S+': 0, 'S': 1, 'A+': 2, 'A': 3, 'A-': 4, 'B+': 5, 'B': 6, 'C': 7, 'discovered': 8 };
+    const modelTierOrder = { 'S': 0, 'A': 1, 'B': 2, 'C': 3, 'discovered': 4 };
     models.sort((a, b) => {
       const ta = modelTierOrder[a[2]] ?? 9;
       const tb = modelTierOrder[b[2]] ?? 9;
@@ -507,58 +514,41 @@ function getPrioritizedProviders(config, opts = {}) {
 }
 
 /**
- * Check if circuit breaker is open for a provider
+ * Check if circuit breaker is open for a provider (provider-level)
+ * @param {string} providerKey - Provider key
+ * @returns {boolean} True if circuit is open (requests blocked)
  */
 function isCircuitOpen(providerKey) {
-  const state = circuitBreaker.get(providerKey);
-  if (!state) return false;
-  if (!state.open && !state.halfOpen) return false;
-  // If halfOpen, allow the probe request through
-  if (state.halfOpen) return false;
-  // Check if reset time elapsed — enter halfOpen state (allow probe)
-  if (Date.now() - (state.openedAt || state.lastFailure) > CIRCUIT_RESET_MS) {
-    state.halfOpen = true;
-    state.open = false;
-    return false;
-  }
-  return true;
+  return !circuitBreaker.canRequest(providerKey);
 }
 
 /**
- * Record failure for circuit breaker
+ * Check if a specific model is circuit-open (model-level)
+ * @param {string} providerKey - Provider key
+ * @param {string} modelName - Model name
+ * @returns {boolean} True if model circuit is open
  */
-function recordFailure(providerKey) {
-  let state = circuitBreaker.get(providerKey);
-  if (!state) {
-    state = { failures: 0, lastFailure: 0, open: false, openedAt: 0, halfOpen: false };
-    circuitBreaker.set(providerKey, state);
-  }
-  state.failures++;
-  state.lastFailure = Date.now();
-  // If halfOpen probe failed, re-open immediately
-  if (state.halfOpen) {
-    state.open = true;
-    state.halfOpen = false;
-    state.openedAt = Date.now();
-    return;
-  }
-  if (state.failures >= CIRCUIT_THRESHOLD && !state.open) {
-    state.open = true;
-    state.openedAt = Date.now();
-  }
+function isModelCircuitOpen(providerKey, modelName) {
+  return !circuitBreaker.canRequestModel(providerKey, modelName);
+}
+
+/**
+ * Record failure for circuit breaker with smart error classification
+ * @param {string} providerKey - Provider key
+ * @param {string} [modelName] - Model name (for model-level tracking)
+ * @param {object} [err] - Error object for classification
+ */
+function recordFailure(providerKey, modelName, err) {
+  circuitBreaker.recordFailure(providerKey, modelName, err);
 }
 
 /**
  * Record success for circuit breaker
+ * @param {string} providerKey - Provider key
+ * @param {string} [modelName] - Model name (for model-level tracking)
  */
-function recordSuccess(providerKey) {
-  const state = circuitBreaker.get(providerKey);
-  if (state) {
-    state.failures = 0;
-    state.open = false;
-    state.openedAt = 0;
-    state.halfOpen = false;
-  }
+function recordSuccess(providerKey, modelName) {
+  circuitBreaker.recordSuccess(providerKey, modelName);
 }
 
 /**
@@ -739,6 +729,12 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
   const body = { ...baseBody };
   let selectedModelId = modelsToTry[modelIdx];
 
+  // Skip if this specific model is circuit-open (model-level check)
+  if (isModelCircuitOpen(provider.key, selectedModelId)) {
+    console.log(`[Proxy] ⏭️ Model ${selectedModelId} circuit-open for ${provider.key}, skipping...`);
+    continue;
+  }
+
   /**
    * model=auto 或 tier-* 模式：使用当前尝试的模型
    * 否则，去除 provider/ 前缀得到实际模型名
@@ -837,6 +833,8 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
       // 404/410 = model not found, try next model in same provider
       if ((response.status === 404 || response.status === 410) && modelIdx < modelsToTry.length - 1) {
         lastError = { status: response.status, error: `Model ${selectedModelId} not found`, provider: provider.key };
+        // Record model-level failure (model not found)
+        recordFailure(provider.key, selectedModelId, { status: response.status });
         continue; // try next model
       }
 
@@ -849,7 +847,7 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
     // STREAMING MODE: forward chunks via SSE
     if (isStream && onChunk) {
       console.log(`[Proxy] ✅ ${provider.key} streaming started (${response.status})`);
-      recordSuccess(provider.key);
+      recordSuccess(provider.key, selectedModelId);
       
       const extractor = new ThinkingExtractor();
       const reader = response.body.getReader();
@@ -870,6 +868,8 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
         for (const line of completeLines) {
           if (line.startsWith('data:')) {
             const jsonPayload = line.substring(5).trim();
+            // Skip upstream [DONE] — wrapper sends its own exactly once
+            if (jsonPayload === '[DONE]') continue;
             try {
               const parsed = JSON.parse(jsonPayload);
               if (parsed.choices && parsed.choices[0] && parsed.choices[0].delta) {
@@ -906,8 +906,8 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
             } catch {
               onChunk(line + '\n\n', false, provider.key);
             }
-          } else {
-            // Wrap raw JSON lines in SSE format
+          } else if (line.trim() !== '[DONE]') {
+            // Wrap raw JSON lines in SSE format (skip [DONE])
             onChunk('data: ' + line + '\n\n', false, provider.key);
           }
         }
@@ -917,7 +917,8 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
       if (buffer.trim()) {
         const line = buffer.trim();
         if (line.startsWith('data:')) {
-          onChunk(line + '\n\n', false, provider.key);
+          const jsonPayload = line.substring(5).trim();
+          if (jsonPayload !== '[DONE]') onChunk(line + '\n\n', false, provider.key);
         } else {
           onChunk('data: ' + line + '\n\n', false, provider.key);
         }
@@ -980,7 +981,7 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
     }
 
     console.log(`[Proxy] ✅ ${provider.key} succeeded (${response.status})`);
-    recordSuccess(provider.key);
+    recordSuccess(provider.key, selectedModelId);
 
     const cleanedData = cleanResponseBody(responseData);
     // 尝试从响应中解析 token 用量
@@ -1005,7 +1006,7 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
           const { setModelTier, getAllModelTiers } = require('./db');
           const allTiers = getAllModelTiers();
           const failedTier = allTiers[provider.key + '/' + selectedModelId];
-          if (failedTier && ['S+','S','A+','A','A-','B+','B'].includes(failedTier)) {
+          if (failedTier && ['S','A','B'].includes(failedTier)) {
             const prefix = provider.key + '/';
             let degraded = 0;
             for (const [key, tier] of Object.entries(allTiers)) {
@@ -1039,7 +1040,7 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
       const { setModelTier, getAllModelTiers } = require('./db');
       const allTiers = getAllModelTiers();
       const failedTier = allTiers[provider.key + '/' + selectedModelId];
-      if (failedTier && ['S+','S','A+','A','A-','B+','B'].includes(failedTier)) {
+      if (failedTier && ['S','A','B'].includes(failedTier)) {
         const prefix = provider.key + '/';
         let degraded = 0;
         for (const [key, tier] of Object.entries(allTiers)) {
@@ -1050,7 +1051,7 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
       }
     } catch {}
 
-    recordFailure(provider.key);
+    recordFailure(provider.key, selectedModelId, { status: 0, code: errorMsg });
     throw { status: 0, error: errorMsg, provider: provider.key };
   }
   } // end for loop
@@ -1084,6 +1085,16 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
   
   // Clean up old rate limit data periodically
   cleanRateLimits();
+  
+  // Rate limiting check
+  const rateLimitResult = rateLimiter.checkLimit('global', { algorithm: 'token-bucket', maxTokens: 60, refillRate: 1 });
+  if (!rateLimitResult.allowed) {
+    throw {
+      status: 429,
+      error: `Rate limit exceeded. Retry after ${Math.ceil(rateLimitResult.retryAfter / 1000)} seconds`,
+      provider: 'rate-limiter'
+    };
+  }
 
   // Get session early for sticky session management
   const sessionId = getSessionId(reqBody);
@@ -1176,6 +1187,7 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
       stats.totalRequests++; stats.successfulRequests++;
       stats.providerUsage.set(chosenProvider.key, (stats.providerUsage.get(chosenProvider.key) || 0) + 1);
       recordRateLimit(chosenProvider.key, chosenProvider.apiKey);
+      recordSuccess(chosenProvider.key, reqBody.model);
       if (sessionId) setStickyProvider(sessionId, chosenProvider);
       
       try {
@@ -1189,6 +1201,7 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
     } catch (err) {
       console.log(`[Proxy] ${sessionId ? 'Sticky' : 'Active'} provider ${chosenProvider.key} failed, failover...`);
       errors.push({ provider: chosenProvider.key, error: err.error || err.message });
+      recordFailure(chosenProvider.key, reqBody.model, err);
       fallbackCount++;
       if (err.status === 429) setCooldown(chosenProvider.key, chosenProvider.apiKey, RATE_LIMIT_COOLDOWN_MS);
       // Remove failed provider from failover list so it isn't retried immediately
@@ -1197,8 +1210,15 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
     }
   }
   
-  // 3. Failover: try providers in priority order
-  for (const provider of providers) {
+  // 3. Failover: try providers using load balancer
+  // Get next provider from load balancer (one at a time)
+  let providerIndex = 0;
+  const sortedProviders = [...providers].sort((a, b) => a.priority - b.priority);
+  
+  while (providerIndex < sortedProviders.length) {
+    const provider = sortedProviders[providerIndex];
+    providerIndex++;
+    
     if (isCircuitOpen(provider.key)) {
       errors.push({ provider: provider.key, error: 'Circuit breaker open' });
       continue;
@@ -1211,15 +1231,33 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
       continue;
     }
     
+    const startTime = Date.now();
+    
     try {
       console.log(`[Proxy] Trying provider: ${provider.key} (${contextCheck.tokens} tokens / ${contextCheck.limit} limit)`);
+      loadBalancer.recordConnection(provider.key);
       const result = await forwardToProvider(provider, reqBody, onStreamChunk);
+      const latencyMs = Date.now() - startTime;
+      loadBalancer.releaseConnection(provider.key);
+      loadBalancer.recordLatency(provider.key, latencyMs);
       
       if (result.streaming) return result;
       
       stats.totalRequests++; stats.successfulRequests++;
       stats.providerUsage.set(provider.key, (stats.providerUsage.get(provider.key) || 0) + 1);
       recordRateLimit(provider.key, provider.apiKey);
+      recordSuccess(provider.key, reqBody.model);
+      
+      // Record metrics
+      metrics.recordRequest({
+        provider: provider.key,
+        model: reqBody.model || 'unknown',
+        latencyMs,
+        success: true,
+        tokensIn: 0,
+        tokensOut: 0,
+        statusCode: result.status,
+      });
       
       setActiveProvider(sessionId, { key: provider.key, apiKey: provider.apiKey, name: provider.name, url: provider.url, models: provider.models });
       if (sessionId) setStickyProvider(sessionId, { key: provider.key, apiKey: provider.apiKey, name: provider.name, url: provider.url, models: provider.models });
@@ -1235,8 +1273,20 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
       }
     } catch (err) {
       errors.push({ provider: provider.key, error: err.error || err.message });
+      recordFailure(provider.key, reqBody.model, err);
       fallbackCount++;
       if (err.status === 429) setCooldown(provider.key, provider.apiKey, RATE_LIMIT_COOLDOWN_MS);
+      
+      // Record failed request metrics
+      metrics.recordRequest({
+        provider: provider.key,
+        model: reqBody.model || 'unknown',
+        latencyMs: Date.now() - startTime,
+        success: false,
+        tokensIn: 0,
+        tokensOut: 0,
+        statusCode: err.status || 500,
+      });
     }
   }
   
@@ -1258,6 +1308,9 @@ async function handleChatCompletions(reqBody, onStreamChunk = null) {
   // All fallbacks exhausted
   stats.totalRequests++;
   stats.failedRequests++;
+  
+  // Record all-provider failure
+  metrics.incrementCounter('flap_all_providers_failed_total');
   
   const errorTypes = errors.map(e => `${e.provider}: ${e.error}`).join('; ');
   console.log(`[Proxy] 💥 All ${providers.length} providers failed. Errors: ${errorTypes}`);
@@ -1300,11 +1353,7 @@ function createServer() {
         successful_requests: stats.successfulRequests,
         failed_requests: stats.failedRequests,
         healthy_endpoints: providers.filter(p => !isCircuitOpen(p.key)).map(p => p.name),
-        circuit_breaker: Array.from(circuitBreaker.entries()).map(([k, v]) => ({
-          provider: k,
-          open: v.open,
-          failures: v.failures,
-        })),
+        circuit_breaker: circuitBreaker.getSummary(),
       }));
       return;
     }
@@ -1318,6 +1367,20 @@ function createServer() {
         failed_requests: stats.failedRequests,
         provider_usage: Object.fromEntries(stats.providerUsage),
       }));
+      return;
+    }
+    
+    // JSON metrics endpoint (used by admin UI)
+    if (pathname === '/metrics' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(metrics.getJsonMetrics()));
+      return;
+    }
+    
+    // Prometheus metrics endpoint (for monitoring tools like Grafana)
+    if (pathname === '/metrics/prometheus' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
+      res.end(metrics.getPrometheusMetrics());
       return;
     }
     
@@ -1338,13 +1401,17 @@ function createServer() {
           // STREAMING MODE: Try providers without sending headers first
           let providerName = 'unknown';
           let headersSent = false;
+          let streamFinished = false;
 
           const onChunk = (chunk, isDone, provider) => {
               if (provider && providerName === 'unknown') {
                 providerName = provider;
               }
-              
+
+              if (streamFinished) return;
+
               if (isDone) {
+                streamFinished = true;
                 if (!headersSent) {
                   // Provider succeeded but no chunks arrived before done
                   // This shouldn't happen, but handle it
@@ -1356,22 +1423,24 @@ function createServer() {
                     'X-Provider': providerName,
                   });
                 }
-                // Send final [DONE] marker
+                // Send final [DONE] marker exactly once.
                 res.write('data: [DONE]\n\n');
                 res.end();
-              } else if (chunk) {
-                if (!headersSent) {
-                  // First successful chunk - send headers now
-                  headersSent = true;
-                  res.writeHead(200, {
-                    'Content-Type': 'text/event-stream',
-                    'Cache-Control': 'no-cache',
-                    'Connection': 'keep-alive',
-                    'X-Provider': providerName,
-                  });
-                }
-                res.write(chunk);
+                return;
               }
+
+              if (!chunk) return;
+              if (!headersSent) {
+                // First successful chunk - send headers now
+                headersSent = true;
+                res.writeHead(200, {
+                  'Content-Type': 'text/event-stream',
+                  'Cache-Control': 'no-cache',
+                  'Connection': 'keep-alive',
+                  'X-Provider': providerName,
+                });
+              }
+              res.write(chunk);
             };
             
             try {
@@ -1387,7 +1456,8 @@ function createServer() {
                 } else {
                   // Partial stream started — send error via SSE (can't change status)
                   try {
-                    res.write('data: {"error":"' + (err.error || 'All providers failed') + '"}\n\n');
+                    const errMsg = JSON.stringify({ error: err.error || 'All providers failed' });
+                    res.write('data: ' + errMsg + '\n\n');
                     res.write('data: [DONE]\n\n');
                     res.end();
                   } catch {}
@@ -1440,7 +1510,7 @@ function createServer() {
         const anthroBody = JSON.parse(body);
         // Convert Anthropic request → OpenAI internal format
         const openaiBody = {
-          model: anthroBody.model || 'tier-b',
+          model: anthroBody.model || 'auto-b',
           messages: [],
           max_tokens: anthroBody.max_tokens || 4096,
           stream: !!anthroBody.stream,
@@ -1526,21 +1596,15 @@ function createServer() {
     // OpenAI-compatible /v1/embeddings endpoint
     // ============================================================
     if (pathname === '/v1/embeddings' && req.method === 'POST') {
-      const authHeader = req.headers.authorization || '';
-      const bearerMatch = authHeader.match(/^bearer\s+(.+)$/i);
-      const apiKey = bearerMatch ? bearerMatch[1].trim() : authHeader.trim();
-      let isAuthed = false;
-      if (apiKey && timingSafeEqual(apiKey, getServerKey())) isAuthed = true;
-      if (!isAuthed) {
-        try { const cookies = parseCookies(req); if (cookies.flap_session) { const s = validateSession(cookies.flap_session); if (s) isAuthed = true; } } catch {}
+      if (!authenticateRequest(req)) {
+        jsonError(res, 401, 'Invalid API key');
+        return;
       }
-      if (!isAuthed) { jsonError(res, 401, 'Invalid API key'); return; }
 
-      let body = '';
-      req.on('data', chunk => { body += chunk; if (body.length > 1024 * 1024) { req.destroy(); body = ''; } });
-      req.on('end', async () => {
-        try {
-          const reqBody = JSON.parse(body);
+      let body;
+      try { body = await readBody(req, res); } catch { return; }
+      try {
+        const reqBody = JSON.parse(body);
           const modelId = reqBody.model || '';
           const input = reqBody.input;
           if (!input) { jsonError(res, 400, 'Missing required field: input'); return; }
@@ -1599,13 +1663,11 @@ function createServer() {
         } catch (err) {
           jsonError(res, 502, err.message || 'Embeddings failed');
         }
-      });
       return;
     }
 
     // Models list — tier aliases + synced models + discovered models
     if (pathname === '/v1/models' && req.method === 'GET') {
-      const { getAllDiscoveredModels } = require('./admin');
       const { getAllSyncedModels } = require('./sync');
 
       // Tier alias models — derived from TIER_ALIAS_MAP

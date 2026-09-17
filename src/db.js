@@ -272,6 +272,55 @@ function encryptAllExistingKeys() {
 }
 
 // ============================================================================
+// Migrate old tier names (S+, S, A+, A, A-, B+, B, C) to new simplified names (S, A, B, C)
+// ============================================================================
+function migrateTierNames() {
+  try {
+    const migrated = getMeta('tier_names_migrated');
+    if (migrated) return;
+
+    // Mapping: old tier -> new tier
+    const TIER_MAP = { 'S+': 'S', 'S': 'S', 'A+': 'A', 'A': 'A', 'A-': 'A', 'B+': 'B', 'B': 'B', 'C': 'C' };
+
+    // Migrate model_tiers table
+    const rows = db.prepare("SELECT model_id, provider, tier FROM model_tiers WHERE tier IN ('S+','S','A+','A','A-','B+','B','C')").all();
+    if (rows.length > 0) {
+      const update = db.prepare('UPDATE model_tiers SET tier = ? WHERE model_id = ? AND provider = ?');
+      let count = 0;
+      for (const row of rows) {
+        const newTier = TIER_MAP[row.tier];
+        if (newTier && newTier !== row.tier) {
+          update.run(newTier, row.model_id, row.provider);
+          count++;
+        }
+      }
+      if (count > 0) console.log(`[DB] 已迁移 ${count} 个模型等级名称`);
+    }
+
+    // Migrate sync_models table if it exists
+    try {
+      const syncRows = db.prepare("SELECT model_id, provider, tier FROM sync_models WHERE tier IN ('S+','S','A+','A','A-','B+','B','C')").all();
+      if (syncRows.length > 0) {
+        const updateSync = db.prepare('UPDATE sync_models SET tier = ? WHERE model_id = ? AND provider = ?');
+        let syncCount = 0;
+        for (const row of syncRows) {
+          const newTier = TIER_MAP[row.tier];
+          if (newTier && newTier !== row.tier) {
+            updateSync.run(newTier, row.model_id, row.provider);
+            syncCount++;
+          }
+        }
+        if (syncCount > 0) console.log(`[DB] 已迁移 ${syncCount} 个同步模型等级名称`);
+      }
+    } catch {}
+
+    setMeta('tier_names_migrated', '1');
+  } catch (err) {
+    console.warn('[DB] 等级名称迁移失败:', err.message);
+  }
+}
+
+// ============================================================================
 // Initialize and get database
 // ============================================================================
 function getDb() {
@@ -291,6 +340,7 @@ function getDb() {
   createTables();
   migrateFromJson();
   encryptAllExistingKeys();
+  migrateTierNames();
 
   return db;
 }
@@ -626,32 +676,36 @@ function getProviderKeys(provider) {
 function getAllProviderKeys() {
   const result = {};
 
-  // 1. 从 SQLite 读取（最优先）
+  // 从 SQLite 读取（唯一数据源）
   const rows = db.prepare('SELECT provider, api_key, notes FROM api_keys ORDER BY provider, rowid').all();
   for (const row of rows) {
     if (!result[row.provider]) result[row.provider] = [];
     result[row.provider].push({ key: decryptApiKey(row.api_key), notes: row.notes || '' });
   }
 
-  // 2. 从 config.json 合并（作为 SQLite 的补充/回退）
+  // 迁移兼容：如果 SQLite 中某提供商没有密钥，从 config.json 导入到 SQLite
   try {
     if (fs.existsSync(CONFIG_PATH)) {
       const raw = fs.readFileSync(CONFIG_PATH, 'utf8').trim();
       if (raw) {
         const cfg = JSON.parse(raw);
         if (cfg.apiKeys && typeof cfg.apiKeys === 'object') {
+          const insertStmt = db.prepare('INSERT OR IGNORE INTO api_keys (provider, api_key, notes) VALUES (?, ?, ?)');
           for (const [provider, keys] of Object.entries(cfg.apiKeys)) {
-            // 只合并 SQLite 中没有的提供商密钥
             if (!result[provider] || result[provider].length === 0) {
               const keyList = Array.isArray(keys) ? keys : [keys];
-              const decryptedList = [];
               for (const k of keyList) {
                 if (typeof k === 'string' && k.trim()) {
-                  decryptedList.push({ key: decryptApiKey(k.trim()), notes: '' });
+                  const encrypted = encryptApiKey(k.trim());
+                  if (encrypted) {
+                    insertStmt.run(provider, encrypted, '');
+                    if (!result[provider]) result[provider] = [];
+                    result[provider].push({ key: k.trim(), notes: '' });
+                  }
                 }
               }
-              if (decryptedList.length > 0) {
-                result[provider] = decryptedList;
+              if (result[provider]?.length > 0) {
+                console.log(`[DB] 从 config.json 迁移 ${result[provider].length} 个密钥到 SQLite: ${provider}`);
               }
             }
           }
@@ -659,7 +713,7 @@ function getAllProviderKeys() {
       }
     }
   } catch (err) {
-    console.warn('[DB] getAllProviderKeys error:', err.message);
+    console.warn('[DB] getAllProviderKeys 迁移兼容错误:', err.message);
   }
 
   return result;

@@ -173,9 +173,9 @@ async function runHealthCheck(config) {
     const keys = getAllApiKeys(config, providerKey);
     if (keys.length === 0 && !provider.noKeyRequired) continue;
 
-    // Get best model for this provider (first S+ or S or first available)
+    // Get best model for this provider (first S or first available)
     const models = require('./models').getModelsByProvider(providerKey);
-    const bestModel = models.find(m => m[2] === 'S+') || models.find(m => m[2] === 'S') || models[0];
+    const bestModel = models.find(m => m[2] === 'S') || models[0];
     const modelId = bestModel ? bestModel[0] : null;
     providerModels.set(providerKey, { modelId, modelName: bestModel ? bestModel[1] : 'Unknown' });
 

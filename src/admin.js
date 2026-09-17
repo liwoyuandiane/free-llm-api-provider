@@ -416,7 +416,10 @@ body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang S
 .pi-count{font-size:var(--font-sm);color:var(--text-muted);margin-left:auto;white-space:nowrap}
 
 /* ── Key list ── */
-.kl{display:flex;flex-direction:column;gap:0}
+.kl{display:none;flex-direction:column;gap:0}
+.kl.kl-open{display:flex}
+.kl-toggle{transition:color 0.2s}
+.kl-toggle:hover{color:var(--text)}
 .ke{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border-subtle);font-size:var(--font-base)}
 .ke:last-child{border-bottom:none}
 .ke .kid{font-family:'SF Mono','Fira Code',Consolas,monospace;font-size:var(--font-sm);color:var(--text-muted);white-space:nowrap;min-width:150px}
@@ -556,6 +559,7 @@ tr:hover td{background:var(--card-hover)}
       <button data-p="health" onclick="sp('health')"><span class="ni"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></span><span>健康</span></button>
       <button data-p="stats" onclick="sp('stats')"><span class="ni"><svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg></span><span>统计</span></button>
       <button data-p="settings" onclick="sp('settings')"><span class="ni"><svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 00.12-.61l-1.92-3.32a.488.488 0 00-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 00-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 00-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1115.6 12 3.611 3.611 0 0112 15.6z"/></svg></span><span>设置</span></button>
+      <button data-p="monitoring" onclick="sp('monitoring')"><span class="ni"><svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg></span><span>监控</span></button>
     </nav>
     <div class="side-foot">
       <div class="ka"><button onclick="logout()" style="color:var(--red)">退出</button><button onclick="themeToggle()" title="切换主题" style="flex:none;width:32px;padding:4px"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm0 16c-3.86 0-7-3.14-7-7s3.14-7 7-7 7 3.14 7 7-3.14 7-7 7z"/><path d="M12 7v10c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg></button></div>
@@ -596,7 +600,7 @@ tr:hover td{background:var(--card-hover)}
       <div class="pd">启用/禁用模型，设置等级影响 tier 路由</div>
       <div class="c">
         <div class="ch"><span class="ct">所有模型</span><span style="font-size:13px;color:var(--dim)" id="mc"></span>
-          <span id="autoTierBtnWrap"><button class="btn btn-sm" onclick="startAutoTier()" id="autoTierBtn" style="margin-right:6px">自动定级</button></span>
+          <span id="autoTierBtnWrap"><button class="btn btn-sm" onclick="startAutoTier()" id="autoTierBtn" style="margin-right:6px">重新定级</button></span>
           <button class="btn btn-p btn-sm" id="saveTiersBtn" onclick="saveTiers()" style="display:none">保存等级</button>
         </div>
         <div id="autoTierProgress" style="display:none;margin-bottom:10px;padding:8px 12px;background:var(--bg);border:1px solid var(--b2);border-radius:var(--radius-sm)">
@@ -621,11 +625,7 @@ tr:hover td{background:var(--card-hover)}
       <div class="c">
         <div class="fr"><label>模型</label>
           <select id="pgModel" style="flex:1">
-            <option value="tier-splus" selected>tier-splus</option>
-            <option value="tier-s">tier-s</option>
-            <option value="tier-aplus">tier-aplus</option>
-            <option value="tier-a">tier-a</option>
-            <option value="tier-b">tier-b</option>
+            <option value="">加载中...</option>
           </select>
           <div style="display:flex;align-items:center;gap:10px;margin-left:8px">
             <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:var(--font-sm);color:var(--text-secondary);user-select:none">
@@ -717,6 +717,46 @@ tr:hover td{background:var(--card-hover)}
         <button class="btn btn-p" onclick="importConfig()">导入配置</button>
         <p id="importExportStatus" style="font-size:12px;color:var(--mut);margin-top:6px"></p>
       </div>
+      <div class="c">
+        <div class="ct" style="margin-bottom:4px">📥 导入 FreeLLMApi 密钥</div>
+        <p style="font-size:14px;color:var(--dim);margin-bottom:10px">支持 FreeLLMApi 项目导出的 JSON、CSV、ENV 格式密钥文件。自动识别格式和平台名称并映射到当前系统。</p>
+        <div class="fr"><label>选择文件</label><input type="file" id="fllmFile" accept=".json,.csv,.env,.txt" style="flex:1"></div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+          <button class="btn btn-p" onclick="importFreellmapi()">导入密钥</button>
+          <span id="fllmStatus" style="font-size:12px;color:var(--mut)"></span>
+        </div>
+        <div id="fllmResult" style="margin-top:8px;font-size:13px;display:none"></div>
+      </div>
+    </div>
+
+    <!-- Page: Monitoring -->
+    <div class="page" id="p-monitoring">
+      <div class="pt">监控面板</div>
+      <div class="pd">实时监控熔断器、负载均衡、速率限制和系统指标</div>
+      
+      <!-- Circuit Breaker -->
+      <div class="c">
+        <div class="ch"><span class="ct">熔断器状态</span><div><button class="btn btn-sm" onclick="rCB()">刷新</button> <button class="btn btn-sm" style="color:var(--red)" onclick="resetAllCB()">一键重置全部</button></div></div>
+        <div id="cbContent"><div class="load" style="margin:18px auto"></div></div>
+      </div>
+      
+      <!-- Load Balancer -->
+      <div class="c">
+        <div class="ch"><span class="ct">负载均衡统计</span><button class="btn btn-sm" onclick="rLB()">刷新</button></div>
+        <div id="lbContent"><div class="load" style="margin:18px auto"></div></div>
+      </div>
+      
+      <!-- Rate Limiter -->
+      <div class="c">
+        <div class="ch"><span class="ct">速率限制状态</span><button class="btn btn-sm" onclick="rRL()">刷新</button></div>
+        <div id="rlContent"><div class="load" style="margin:18px auto"></div></div>
+      </div>
+      
+      <!-- System Metrics -->
+      <div class="c">
+        <div class="ch"><span class="ct">系统指标</span><button class="btn btn-sm" onclick="rMetrics()">刷新</button></div>
+        <div id="metricsContent"><div class="load" style="margin:18px auto"></div></div>
+      </div>
     </div>
 
   </main>
@@ -730,7 +770,7 @@ tr:hover td{background:var(--card-hover)}
 <script id="initData" type="application/json">${JSON.stringify(getAdminInitialData()).replace(/<\//g, '<\\/')}</script>
 <script>
 const A = '/api/admin';
-const TIERS = ['discovered','S+','S','A+','A','A-','B+','B','C'];
+const TIERS = ['discovered','S','A','B','C'];
 
 // Read initial data embedded in the page (no server call needed!)
 const initData = JSON.parse(document.getElementById('initData').textContent);
@@ -748,6 +788,38 @@ function sp(n) {
   if(n==='health') rH();
   if(n==='stats') rS();
   if(n==='providers'){rP();rPP();}
+  if(n==='monitoring'){rCB();rLB();rRL();rMetrics();}
+  if(n==='playground') loadPgModels();
+}
+
+/** loadPgModels — 动态加载去重后的所有模型到测试页面下拉框 */
+let _pgModelsLoaded = false;
+async function loadPgModels() {
+  if (_pgModelsLoaded) return;
+  const sel = document.getElementById('pgModel');
+  if (!sel) return;
+  try {
+    const cfg = await api('/config');
+    const seen = new Set();
+    const opts = [];
+    // Auto tier models first
+    for (const t of ['auto-s', 'auto-a', 'auto-b', 'auto-c']) {
+      opts.push('<option value="' + t + '">' + t + '</option>');
+      seen.add(t);
+    }
+    // Static models (deduplicated by modelId)
+    for (const m of (cfg.allStaticModels || [])) {
+      const mid = m[0];
+      if (mid && !seen.has(mid)) { seen.add(mid); opts.push('<option value="' + esc(mid) + '">' + esc(mid) + '</option>'); }
+    }
+    // Discovered models (deduplicated by id)
+    for (const m of (cfg.discoveredModels || [])) {
+      const mid = m.id || '';
+      if (mid && !seen.has(mid)) { seen.add(mid); opts.push('<option value="' + esc(mid) + '">' + esc(mid) + '</option>'); }
+    }
+    sel.innerHTML = opts.join('');
+    _pgModelsLoaded = true;
+  } catch(e) { console.warn('[loadPgModels]', e); }
 }
 
 /**
@@ -798,6 +870,299 @@ async function copyKey(){try{const r=await api('/server-key');if(r.key){await na
  */
 function logout(){fetch('/api/admin/logout',{method:'POST'}).then(()=>window.location.href='/admin/login').catch(()=>window.location.href='/admin/login');}
 
+// ── 监控页面函数 ──
+
+/**
+ * rCB — 渲染熔断器状态（提供商级别 + 模型级别）
+ */
+async function rCB(){
+  const el=document.getElementById('cbContent');el.innerHTML='<div class="load" style="margin:18px auto"></div>';
+  try{
+    const data=await api('/circuit-breaker');
+    const summary=data.summary||{};
+    const providers=data.providers||[];
+    const models=data.models||[];
+    
+    if(Object.keys(summary).length===0&&providers.length===0&&models.length===0){
+      el.innerHTML='<div class="empty">暂无熔断器数据</div>';
+      return;
+    }
+    
+    let html='<div style="display:grid;gap:8px">';
+    
+    // Summary cards
+    if(summary.totalStates!==undefined){
+      html+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">';
+      html+='<div style="padding:12px;background:var(--bg);border-radius:8px;text-align:center"><div style="font-size:24px;font-weight:600;color:var(--accent)">'+(summary.totalStates||0)+'</div><div style="font-size:12px;color:var(--dim)">监控提供商</div></div>';
+      html+='<div style="padding:12px;background:var(--bg);border-radius:8px;text-align:center"><div style="font-size:24px;font-weight:600;color:var(--green)">'+(summary.closed||0)+'</div><div style="font-size:12px;color:var(--dim)">正常 (Closed)</div></div>';
+      html+='<div style="padding:12px;background:var(--bg);border-radius:8px;text-align:center"><div style="font-size:24px;font-weight:600;color:var(--yellow)">'+(summary.halfOpen||0)+'</div><div style="font-size:12px;color:var(--dim)">半开 (Half-Open)</div></div>';
+      html+='<div style="padding:12px;background:var(--bg);border-radius:8px;text-align:center"><div style="font-size:24px;font-weight:600;color:var(--red)">'+(summary.open||0)+'</div><div style="font-size:12px;color:var(--dim)">断开 (Open)</div></div>';
+      html+='</div>';
+    }
+    
+    // Model-level summary
+    const modelSummary = summary.models || {};
+    if(modelSummary.total > 0) {
+      html+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">';
+      html+='<div style="padding:12px;background:var(--bg);border-radius:8px;text-align:center"><div style="font-size:24px;font-weight:600;color:var(--accent)">'+(modelSummary.total||0)+'</div><div style="font-size:12px;color:var(--dim)">监控模型</div></div>';
+      html+='<div style="padding:12px;background:var(--bg);border-radius:8px;text-align:center"><div style="font-size:24px;font-weight:600;color:var(--green)">'+(modelSummary.closed||0)+'</div><div style="font-size:12px;color:var(--dim)">模型正常</div></div>';
+      html+='<div style="padding:12px;background:var(--bg);border-radius:8px;text-align:center"><div style="font-size:24px;font-weight:600;color:var(--yellow)">'+(modelSummary.halfOpen||0)+'</div><div style="font-size:12px;color:var(--dim)">模型半开</div></div>';
+      html+='<div style="padding:12px;background:var(--bg);border-radius:8px;text-align:center"><div style="font-size:24px;font-weight:600;color:var(--red)">'+(modelSummary.open||0)+'</div><div style="font-size:12px;color:var(--dim)">模型断开</div></div>';
+      html+='</div>';
+    }
+    
+    // Provider details
+    if(providers.length>0){
+      html+='<div style="font-weight:500;margin:8px 0 4px;color:var(--accent)">📦 提供商级别熔断</div>';
+      html+='<table style="width:100%;border-collapse:collapse;font-size:13px">';
+      html+='<thead><tr style="border-bottom:1px solid var(--b2)"><th style="text-align:left;padding:8px">提供商</th><th style="text-align:center;padding:8px">状态</th><th style="text-align:center;padding:8px">失败次数</th><th style="text-align:center;padding:8px">成功次数</th><th style="text-align:center;padding:8px">操作</th></tr></thead>';
+      html+='<tbody>';
+      for(const p of providers){
+        const stateColor=p.state==='open'?'var(--red)':p.state==='halfOpen'?'var(--yellow)':'var(--green)';
+        const stateText=p.state==='open'?'断开':p.state==='halfOpen'?'半开':'正常';
+        html+='<tr style="border-bottom:1px solid var(--b2)">';
+        html+='<td style="padding:8px;font-weight:500">'+esc(p.key)+'</td>';
+        html+='<td style="padding:8px;text-align:center"><span style="color:'+stateColor+';font-weight:500">'+stateText+'</span></td>';
+        html+='<td style="padding:8px;text-align:center">'+(p.failures||0)+'</td>';
+        html+='<td style="padding:8px;text-align:center">'+(p.successes||0)+'</td>';
+        html+='<td style="padding:8px;text-align:center"><button class="btn btn-sm" onclick="resetCB(\\''+esc(p.key)+'\\')">重置</button></td>';
+        html+='</tr>';
+      }
+      html+='</tbody></table>';
+    }
+    
+    // Model-level details
+    if(models.length>0){
+      html+='<div style="font-weight:500;margin:12px 0 4px;color:var(--accent)">🎯 模型级别熔断 (404/410 自动阻断)</div>';
+      html+='<table style="width:100%;border-collapse:collapse;font-size:13px">';
+      html+='<thead><tr style="border-bottom:1px solid var(--b2)"><th style="text-align:left;padding:8px">提供商</th><th style="text-align:left;padding:8px">模型</th><th style="text-align:center;padding:8px">状态</th><th style="text-align:center;padding:8px">失败次数</th><th style="text-align:center;padding:8px">操作</th></tr></thead>';
+      html+='<tbody>';
+      for(const m of models){
+        const stateColor=m.state==='open'?'var(--red)':m.state==='halfOpen'?'var(--yellow)':'var(--green)';
+        const stateText=m.state==='open'?'断开':m.state==='halfOpen'?'半开':'正常';
+        html+='<tr style="border-bottom:1px solid var(--b2)">';
+        html+='<td style="padding:8px">'+esc(m.providerKey)+'</td>';
+        html+='<td style="padding:8px;font-weight:500">'+esc(m.modelName)+'</td>';
+        html+='<td style="padding:8px;text-align:center"><span style="color:'+stateColor+';font-weight:500">'+stateText+'</span></td>';
+        html+='<td style="padding:8px;text-align:center">'+(m.failures||0)+'</td>';
+        html+='<td style="padding:8px;text-align:center"><button class="btn btn-sm" onclick="resetModelCB(\\''+esc(m.providerKey)+'\\',\\''+esc(m.modelName)+'\\')">重置</button></td>';
+        html+='</tr>';
+      }
+      html+='</tbody></table>';
+    }
+    
+    html+='</div>';
+    el.innerHTML=html;
+  }catch(e){
+    el.innerHTML='<div class="empty" style="color:var(--red)">加载失败: '+esc(e.message)+'</div>';
+  }
+}
+
+async function resetCB(provider){
+  if(!confirm('确定要重置 '+provider+' 的熔断器状态吗？（包括该提供商下所有模型）'))return;
+  await api('/circuit-breaker/reset',{method:'POST',body:{provider}});
+  t('熔断器已重置');
+  rCB();
+}
+
+async function resetModelCB(provider, model){
+  if(!confirm('确定要重置 '+provider+' / '+model+' 的模型熔断状态吗？'))return;
+  await api('/circuit-breaker/reset',{method:'POST',body:{provider, model}});
+  t('模型熔断器已重置');
+  rCB();
+}
+
+async function resetAllCB(){
+  if(!confirm('确定要重置所有提供商和模型的熔断器状态吗？'))return;
+  await api('/circuit-breaker/reset',{method:'POST',body:{}});
+  t('所有熔断器已重置');
+  rCB();
+}
+
+/**
+ * rLB — 渲染负载均衡统计
+ */
+async function rLB(){
+  const el=document.getElementById('lbContent');el.innerHTML='<div class="load" style="margin:18px auto"></div>';
+  try{
+    const data=await api('/load-balancer');
+    const stats=data.stats||{};
+    const strategy=data.strategy||'latency-aware';
+    
+    if(Object.keys(stats).length===0){
+      el.innerHTML='<div class="empty">暂无负载均衡数据</div>';
+      return;
+    }
+    
+    let html='<div style="margin-bottom:12px;padding:8px 12px;background:var(--bg);border-radius:6px;font-size:13px">';
+    html+='<strong>当前策略:</strong> <span style="color:var(--accent)">'+esc(strategy)+'</span>';
+    html+='</div>';
+    
+    html+='<table style="width:100%;border-collapse:collapse;font-size:13px">';
+    html+='<thead><tr style="border-bottom:1px solid var(--b2)"><th style="text-align:left;padding:8px">提供商</th><th style="text-align:center;padding:8px">活跃连接</th><th style="text-align:center;padding:8px">平均延迟</th><th style="text-align:center;padding:8px">最近延迟</th><th style="text-align:center;padding:8px">权重</th></tr></thead>';
+    html+='<tbody>';
+    
+    for(const[key,st] of Object.entries(stats)){
+      const avgLatency=Math.round(st.averageLatency||0);
+      const lastLatency=Math.round(st.lastLatency||0);
+      const latencyColor=avgLatency<500?'var(--green)':avgLatency<1500?'var(--yellow)':'var(--red)';
+      const lastColor=lastLatency<500?'var(--green)':lastLatency<1500?'var(--yellow)':'var(--red)';
+      html+='<tr style="border-bottom:1px solid var(--b2)">';
+      html+='<td style="padding:8px;font-weight:500">'+esc(key)+'</td>';
+      html+='<td style="padding:8px;text-align:center">'+(st.connections||0)+'</td>';
+      html+='<td style="padding:8px;text-align:center;color:'+latencyColor+'">'+avgLatency+'ms</td>';
+      html+='<td style="padding:8px;text-align:center;color:'+lastColor+'">'+lastLatency+'ms</td>';
+      html+='<td style="padding:8px;text-align:center">'+(st.weight||1)+'</td>';
+      html+='</tr>';
+    }
+    
+    html+='</tbody></table>';
+    el.innerHTML=html;
+  }catch(e){
+    el.innerHTML='<div class="empty" style="color:var(--red)">加载失败: '+esc(e.message)+'</div>';
+  }
+}
+
+/**
+ * rRL — 渲染速率限制状态
+ */
+async function rRL(){
+  const el=document.getElementById('rlContent');el.innerHTML='<div class="load" style="margin:18px auto"></div>';
+  try{
+    const data=await api('/rate-limiter');
+    const summary=data.summary||{};
+    
+    if(Object.keys(summary).length===0){
+      el.innerHTML='<div class="empty">暂无速率限制数据</div>';
+      return;
+    }
+    
+    let html='<div style="display:grid;gap:8px">';
+    
+    for(const[key,algorithms] of Object.entries(summary)){
+      html+='<div style="padding:12px;background:var(--bg);border-radius:8px">';
+      html+='<div style="font-weight:500;margin-bottom:8px">'+esc(key)+'</div>';
+      
+      for(const[algo,stats] of Object.entries(algorithms)){
+        html+='<div style="font-size:12px;color:var(--dim);margin-bottom:4px">';
+        html+='<strong>'+esc(algo)+'</strong>: ';
+        
+        if(algo==='token-bucket'){
+          html+='剩余 '+stats.remaining+'/'+stats.maxTokens+' 令牌，速率 '+stats.refillRate+'/秒';
+        }else if(algo==='sliding-window'){
+          html+='当前 '+stats.currentRequests+'/'+stats.maxRequests+' 请求，窗口 '+stats.windowMs/1000+'秒';
+        }else if(algo==='leaky-bucket'){
+          html+='当前 '+stats.currentWater+'/'+stats.capacity+' 水位，速率 '+stats.leakRate+'/秒';
+        }
+        
+        html+='</div>';
+      }
+      
+      html+='</div>';
+    }
+    
+    html+='</div>';
+    el.innerHTML=html;
+  }catch(e){
+    el.innerHTML='<div class="empty" style="color:var(--red)">加载失败: '+esc(e.message)+'</div>';
+  }
+}
+
+/**
+ * rMetrics — 渲染系统指标
+ */
+async function rMetrics(){
+  const el=document.getElementById('metricsContent');el.innerHTML='<div class="load" style="margin:18px auto"></div>';
+  try{
+    const data=await api('/metrics');
+    const counters=data.counters||{};
+    const histograms=data.histograms||{};
+    const gauges=data.gauges||{};
+    
+    let html='<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">';
+    
+    // System metrics
+    html+='<div style="padding:12px;background:var(--bg);border-radius:8px">';
+    html+='<div style="font-weight:500;margin-bottom:8px">系统状态</div>';
+    
+    const memoryRss=gauges.flap_memory_rss_bytes;
+    const memoryHeap=gauges.flap_memory_heap_used_bytes;
+    const uptime=gauges.flap_uptime_seconds;
+    
+    if(memoryRss){
+      html+='<div style="font-size:12px;color:var(--dim)">RSS 内存: '+(memoryRss[0]?.value/1024/1024).toFixed(1)+' MB</div>';
+    }
+    if(memoryHeap){
+      html+='<div style="font-size:12px;color:var(--dim)">堆内存: '+(memoryHeap[0]?.value/1024/1024).toFixed(1)+' MB</div>';
+    }
+    if(uptime){
+      const uptimeSec=uptime[0]?.value||0;
+      const hours=Math.floor(uptimeSec/3600);
+      const mins=Math.floor((uptimeSec%3600)/60);
+      html+='<div style="font-size:12px;color:var(--dim)">运行时间: '+hours+'h '+mins+'m</div>';
+    }
+    
+    html+='</div>';
+    
+    // Request stats
+    html+='<div style="padding:12px;background:var(--bg);border-radius:8px">';
+    html+='<div style="font-weight:500;margin-bottom:8px">请求统计</div>';
+    
+    const totalReq=counters.flap_requests_total;
+    if(totalReq){
+      let total=0;
+      for(const item of totalReq){
+        total+=item.value;
+      }
+      html+='<div style="font-size:12px;color:var(--dim)">总请求数: '+total+'</div>';
+    }
+    
+    const allFail=counters.flap_all_providers_failed_total;
+    if(allFail&&allFail.length>0){
+      html+='<div style="font-size:12px;color:var(--red)">全部失败: '+allFail[0].value+'</div>';
+    }
+    
+    html+='</div>';
+    
+    // Latency stats
+    html+='<div style="padding:12px;background:var(--bg);border-radius:8px;grid-column:span 2">';
+    html+='<div style="font-weight:500;margin-bottom:8px">延迟分布</div>';
+    
+    const latency=histograms.flap_request_latency_ms;
+    if(latency&&latency.length>0){
+      for(const item of latency){
+        const labels=item.labels||{};
+        const provider=labels.provider||'unknown';
+        html+='<div style="font-size:12px;color:var(--dim);margin-bottom:4px">';
+        html+='<strong>'+esc(provider)+'</strong>: ';
+        html+='平均 '+item.p50+'ms (P50), '+item.p90+'ms (P90), '+item.p95+'ms (P95)';
+        html+=' | 请求数: '+item.count+', 总延迟: '+item.sum+'ms';
+        html+='</div>';
+      }
+    }else{
+      html+='<div style="font-size:12px;color:var(--dim)">暂无延迟数据</div>';
+    }
+    
+    html+='</div>';
+    
+    html+='</div>';
+    el.innerHTML=html;
+  }catch(e){
+    el.innerHTML='<div class="empty" style="color:var(--red)">加载失败: '+esc(e.message)+'</div>';
+  }
+}
+
+// Auto-refresh monitoring page
+setInterval(() => {
+  const mp = document.getElementById('p-monitoring');
+  if (mp && mp.classList.contains('active')) {
+    rCB();
+    rLB();
+    rRL();
+    rMetrics();
+  }
+}, 5000);
+
 /**
  * loadSK — 加载服务器 Key 和当前用户名到页面元素中
  */
@@ -821,6 +1186,7 @@ async function rP() {
   try {
     // 从服务端获取最新配置
     const cfg = await api('/config');
+    _rPConfig = cfg; // Store for test model search-select
     const pr = cfg.allProviders || initData.allProviders || [];
     const em = cfg.enabledProviders || initData.enabledProviders || {};
     // 从 API 获取完整 Key（initData 中的 Key 已掩码）
@@ -841,7 +1207,9 @@ async function rP() {
       const ks = km[p.key] || [];
       const keysArr = Array.isArray(ks) ? ks : [ks];
       const h = hm[p.key];
-      const st = h ? h.status : 'unknown';
+      // 优先使用本地测试缓存（5秒内有效），否则使用服务器健康状态
+      const cached = _testResultCache[p.key];
+      const st = (cached && (Date.now() - cached.ts < 5000)) ? cached.status : (h ? h.status : 'unknown');
       const stColor = st === 'up' ? 'var(--green)' : st === 'down' ? 'var(--red)' : 'var(--mut)';
       const keyCount = keysArr.length;
       const noKey = p.noKeyRequired;
@@ -858,7 +1226,11 @@ async function rP() {
             '</div>' +
           '</div>' +
           (noKey && keyCount === 0 ? '' :
-          '<div class="kl">' +
+          '<div class="kl-wrap">' +
+            '<span class="kl-toggle" onclick="toggleKeys(this)" style="cursor:pointer;font-size:12px;color:var(--blue);user-select:none">' +
+              (keyCount <= 3 ? '' : '▶ 展开 ' + keyCount + ' 个密钥') +
+            '</span>' +
+          '<div class="kl' + (keyCount <= 3 ? ' kl-open' : '') + '">' +
             (keysArr.map(k => {
               const ks2 = typeof k === 'string' ? k : (k.key || k);
               const nt = typeof k === 'object' && k.notes ? k.notes : '';
@@ -875,10 +1247,16 @@ async function rP() {
                   '<button class="ka-del" onclick="dk(\\'' + jsesc(p.key) + '\\',\\'' + jsesc(ks2) + '\\')">移除</button>' +
                 '</span></div>';
             }).join('')) +
-          '</div>') +
-          '<div style="display:flex;gap:6px;align-items:center;margin-top:6px">' +
+          '</div></div>') +
+          '<div style="display:flex;gap:6px;align-items:center;margin-top:6px;position:relative">' +
             '<span style="font-size:13px;color:var(--mut)">测试模型:</span>' +
-            '<input type="text" value="' + esc(tm[p.key] || '') + '" placeholder="auto" style="flex:1;max-width:200px;font-size:13px;background:var(--bg);border:1px solid var(--b2);border-radius:4px;color:var(--text);padding:2px 6px" onchange="stm(\\'' + jsesc(p.key) + '\\',this.value)">' +
+            '<div class="tsm-wrap" style="flex:1;max-width:220px;position:relative">' +
+              '<input type="text" class="tsm-input" value="' + esc(tm[p.key] || '') + '" placeholder="输入搜索或留空=auto" ' +
+                'onfocus="tsmShow(this)" oninput="tsmFilter(this)" ' +
+                'data-prov="' + jsesc(p.key) + '" ' +
+                'style="width:100%;font-size:13px;background:var(--bg);border:1px solid var(--b2);border-radius:4px;color:var(--text);padding:2px 6px;box-sizing:border-box" />' +
+              '<div class="tsm-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:400px;overflow-y:auto;background:var(--card);border:1px solid var(--b2);border-radius:4px;z-index:100;margin-top:2px"></div>' +
+            '</div>' +
           '</div>' +
         '</div></div>';
     }).join('') || '<div class="empty">没有配置的提供商</div>';
@@ -889,19 +1267,19 @@ async function rP() {
       opts += '<option value="__custom__">自定义供应商</option>';
       sel.innerHTML = opts;
     }
-    // 更新侧边栏模型 badge（静态 + 发现，去重）
+    // 更新侧边栏模型 badge（静态 + 发现，按 provider+model 去重）
     const mb = document.getElementById('mb');
     if (mb) {
-      const modelIds = new Set();
+      const modelKeys = new Set();
       const allSm = cfg.allStaticModels || [];
       const allDisc = cfg.discoveredModels || [];
       for (const [k, v] of Object.entries(km)) {
         if (Array.isArray(v) && v.length > 0) {
-          for (const m of allSm.filter(m => m[5] === k)) modelIds.add(m[0]);
-          for (const m of allDisc.filter(m => m.provider === k)) modelIds.add(m.id);
+          for (const m of allSm.filter(m => m[5] === k)) modelKeys.add(k + '/' + m[0]);
+          for (const m of allDisc.filter(m => m.provider === k)) modelKeys.add(k + '/' + m.id);
         }
       }
-      mb.textContent = modelIds.size > 0 ? String(modelIds.size) : '';
+      mb.textContent = modelKeys.size > 0 ? String(modelKeys.size) : '';
     }
   } catch(e) {
     // [Fix 2026-06-24] 显示更详细的错误信息
@@ -946,12 +1324,20 @@ async function rPP(){
     _applyPendingMark();
   }catch(e){el.innerHTML='<div style="color:var(--red)">加载失败</div>';}
 }
+function toggleKeys(el){
+  const w=el.parentElement;
+  const kl=w.querySelector('.kl');
+  if(kl) kl.classList.toggle('kl-open');
+  const open=kl?kl.classList.contains('kl-open'):false;
+  const n=kl?kl.children.length:0;
+  el.textContent=open?'\u25bc \u6536\u8d77 '+n+' \u4e2a\u5bc6\u94a5':'\u25b6 \u5c55\u5f00 '+n+' \u4e2a\u5bc6\u94a5';
+}
 let _ppDragSrc=null;
 function ppDragStart(e){
-  _ppDragSrc=e.target;
-  e.target.style.opacity='0.4';
+  _ppDragSrc=e.target.closest('.pp-row')||e.target;
+  _ppDragSrc.style.opacity='0.4';
   e.dataTransfer.effectAllowed='move';
-  e.dataTransfer.setData('text/plain',e.target.dataset.key);
+  e.dataTransfer.setData('text/plain',_ppDragSrc.dataset.key);
 }
 function ppDragOver(e){
   e.preventDefault();
@@ -960,7 +1346,8 @@ function ppDragOver(e){
   if(el&&el!==_ppDragSrc){el.style.borderBottom='2px solid var(--blue)';}
 }
 function ppDragEnd(e){
-  e.target.style.opacity='1';
+  const src=e.target.closest('.pp-row')||e.target;
+  src.style.opacity='1';
   document.querySelectorAll('.pp-row').forEach(r=>r.style.borderBottom='1px solid var(--b2)');
   _ppDragSrc=null;
 }
@@ -968,15 +1355,14 @@ function ppDrop(e){
   e.preventDefault();
   document.querySelectorAll('.pp-row').forEach(r=>r.style.borderBottom='1px solid var(--b2)');
   const target=e.target.closest('.pp-row');
-  if(!target||target===_ppDragSrc)return;
+  if(!target||target===_ppDragSrc||!_ppDragSrc)return;
   const list=document.getElementById('priorityList');
-  const rows=[...list.querySelectorAll('.pp-row')];
-  const srcIdx=rows.indexOf(_ppDragSrc);
-  const tgtIdx=rows.indexOf(target);
+  const srcIdx=[...list.querySelectorAll('.pp-row')].indexOf(_ppDragSrc);
+  const tgtIdx=[...list.querySelectorAll('.pp-row')].indexOf(target);
   if(srcIdx<tgtIdx)target.after(_ppDragSrc);
   else target.before(_ppDragSrc);
   // Re-number and mark pending
-  rows.forEach((r,i)=>{const n=r.querySelector('span:last-child');if(n)n.textContent='#'+(i+1);});
+  [...list.querySelectorAll('.pp-row')].forEach((r,i)=>{const n=r.querySelector('span:last-child');if(n)n.textContent='#'+(i+1);});
   _markPending();
 }
 function _markPending(){
@@ -1008,7 +1394,17 @@ async function savePP(){
  * tP — 测试提供商连接
  * @param {string} k - 提供商 key
  */
-async function tP(k){t('测试中...');const r=await api('/providers/'+k+'/test',{method:'POST'});t(r.success?(k+' ✅ '+r.latency+'ms'):(k+' ❌ '+(r.error||'失败')),r.success?'succ':'err');setTimeout(rP,2000);}
+// 本地测试结果缓存：provider key → { status: 'up'|'error', timestamp }
+const _testResultCache = {};
+
+async function tP(k){
+  t('测试中...');
+  const r=await api('/providers/'+k+'/test',{method:'POST'});
+  t(r.success?(k+' ✅ '+r.latency+'ms'):(k+' ❌ '+(r.error||'失败')),r.success?'succ':'err');
+  // 缓存测试结果，rP() 渲染时会使用
+  _testResultCache[k] = { status: r.success ? 'up' : 'error', ts: Date.now() };
+  setTimeout(rP,2000);
+}
 /**
  * dP — 发现提供商下的可用模型
  * @param {string} k - 提供商 key
@@ -1069,6 +1465,81 @@ function onNKPChange(){
  */
 async function stm(prov,mid){await api('/test-model',{method:'POST',body:{provider:prov,testModel:mid}});}
 
+/** tsmShow — 显示测试模型搜索下拉列表（留空或显示auto时显示所有模型） */
+function tsmShow(inp) {
+  const dd = inp.parentElement.querySelector('.tsm-dropdown');
+  if (!dd) return;
+  const prov = inp.dataset.prov;
+  // 构建所有提供商的完整模型列表
+  const models = [];
+  models.push({ id: '', label: 'auto (自动路由)', provider: '' });
+  if (typeof _rPConfig !== 'undefined') {
+    const cfg = _rPConfig;
+    for (const m of (cfg.allStaticModels || [])) { if (m[0]) models.push({ id: m[0], label: m[0] + (m[1] && m[1] !== m[0] ? ' (' + m[1] + ')' : '') + ' — ' + (m[5] || ''), provider: m[5] || '' }); }
+    for (const m of (cfg.discoveredModels || [])) { if (m.id) models.push({ id: m.id, label: m.id + ' — ' + (m.provider || ''), provider: m.provider || '' }); }
+  }
+  // "auto" 是显示值，打开下拉时当作空搜索（显示全部）
+  const query = inp.value === 'auto' ? '' : inp.value;
+  tsmRender(dd, models, query, prov);
+  dd.style.display = '';
+  // 如果显示的是 "auto"，选中全部文字，用户开始打字时自动替换
+  if (inp.value === 'auto') { inp.select(); }
+  // Close on outside click
+  const close = (e) => { if (!inp.parentElement.contains(e.target)) { dd.style.display = 'none'; document.removeEventListener('click', close); } };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+/** tsmFilter — 过滤测试模型列表（支持跨所有提供商搜索） */
+function tsmFilter(inp) {
+  const dd = inp.parentElement.querySelector('.tsm-dropdown');
+  if (!dd) return;
+  const prov = inp.dataset.prov;
+  const models = [];
+  models.push({ id: '', label: 'auto (自动路由)', provider: '' });
+  if (typeof _rPConfig !== 'undefined') {
+    const cfg = _rPConfig;
+    // 搜索所有提供商的模型，不限制当前提供商
+    for (const m of (cfg.allStaticModels || [])) { if (m[0]) models.push({ id: m[0], label: m[0] + (m[1] && m[1] !== m[0] ? ' (' + m[1] + ')' : '') + ' — ' + (m[5] || ''), provider: m[5] || '' }); }
+    for (const m of (cfg.discoveredModels || [])) { if (m.id) models.push({ id: m.id, label: m.id + ' — ' + (m.provider || ''), provider: m.provider || '' }); }
+  }
+  tsmRender(dd, models, inp.value, prov);
+  dd.style.display = '';
+}
+
+/** tsmRender — 渲染过滤后的模型列表（支持跨提供商搜索，最多显示200条） */
+function tsmRender(dd, models, query, prov) {
+  const q = (query || '').toLowerCase();
+  // 始终保留 auto 选项在顶部
+  const autoItem = models[0]; // { id: '', label: 'auto (自动路由)' }
+  const restModels = models.slice(1);
+  const filtered = q ? restModels.filter(m => m.id.toLowerCase().includes(q) || m.label.toLowerCase().includes(q)) : restModels;
+  const total = filtered.length;
+  const shown = filtered.slice(0, 200);
+  dd.innerHTML =
+    '<div class="tsm-item" style="padding:4px 8px;cursor:pointer;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-bottom:1px solid var(--b2)" ' +
+    'onmousedown="tsmSelect(this,&#39;' + jsesc(prov) + '&#39;,&#39;&#39;)" ' +
+    'onmouseover="this.style.background=&#39;var(--bg2)&#39;" onmouseout="this.style.background=&#39;&#39;">' +
+    esc(autoItem.label) + '</div>' +
+    (total > 0 ? '<div style="padding:2px 8px;font-size:11px;color:var(--mut)">' + (q ? '匹配 ' + total + ' 个' : '共 ' + total + ' 个模型') + (total > 200 ? '（显示前200个）' : '') + '</div>' : '') +
+    shown.map(m =>
+    '<div class="tsm-item" style="padding:4px 8px;cursor:pointer;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" ' +
+    'onmousedown="tsmSelect(this,&#39;' + jsesc(prov) + '&#39;,&#39;' + jsesc(m.id) + '&#39;)" ' +
+    'onmouseover="this.style.background=&#39;var(--bg2)&#39;" onmouseout="this.style.background=&#39;&#39;">' +
+    esc(m.label) + '</div>'
+  ).join('') + (total === 0 && q ? '<div style="padding:4px 8px;font-size:12px;color:var(--mut)">无匹配结果，点击上方可恢复自动路由</div>' : '');
+}
+
+/** tsmSelect — 选择测试模型 */
+async function tsmSelect(el, prov, mid) {
+  const wrap = el.closest('.tsm-wrap');
+  const inp = wrap ? wrap.querySelector('.tsm-input') : null;
+  const dd = wrap ? wrap.querySelector('.tsm-dropdown') : null;
+  if (inp) inp.value = mid || 'auto';
+  if (dd) dd.style.display = 'none';
+  await stm(prov, mid);
+  t(mid ? '测试模型已设置: ' + mid : '已恢复自动路由');
+}
+
 // ── Key 级操作 ──
 
 /**
@@ -1089,7 +1560,7 @@ async function skn(prov,key,notes){const fk=_resolveKey(prov,key);await api('/pr
  * @param {string} prov - 提供商 key
  * @param {string} key - API Key（可以是掩码后的）
  */
-async function tsk(prov,key){const fk=_resolveKey(prov,key);t('测试中...');const r=await api('/provider-key/test',{method:'POST',body:{provider:prov,key:fk}});t(r.success?'✅ '+r.latency+'ms':'❌ '+(r.error||'失败'),r.success?'succ':'err');rP();}
+async function tsk(prov,key){const fk=_resolveKey(prov,key);t('测试中...');const r=await api('/provider-key/test',{method:'POST',body:{provider:prov,key:fk}});t(r.success?'✅ '+r.latency+'ms':'❌ '+(r.error||'失败'),r.success?'succ':'err');_testResultCache[prov]={status:r.success?'up':'error',ts:Date.now()};rP();}
 
 // ── 备注编辑 ──
 
@@ -1175,14 +1646,14 @@ async function rM(){
   const keyedProviders=new Set(Object.keys(ak).filter(k=>Array.isArray(ak[k])&&ak[k].length>0));
   const gk=m=>{const p=m.provider||m[5]||'',id=m.id||m[0]||'';return p?p+'/'+id:id;};
   const ie=m=>ms[gk(m)]!==false,gt=m=>mt[gk(m)]||'',il=m=>!!lk[gk(m)];
-  // 静态模型 + 发现模型，按 model ID 去重（静态优先）
-  const seenIds=new Set();
+  // 静态模型 + 发现模型，按 provider+model ID 去重（静态优先）
+  const seenKeys=new Set();
   const all=[];
-  for(const m of sm){const id=m[0];if(!seenIds.has(id)){seenIds.add(id);all.push({id,name:m[1],tier:'',provider:m[5]});}}
-  for(const m of disc){const id=m.id;if(!seenIds.has(id)){seenIds.add(id);all.push({id,name:m.id,tier:'',provider:m.provider});}}
+  for(const m of sm){const id=m[0],p=m[5]||'';const k=p+'/'+id;if(!seenKeys.has(k)){seenKeys.add(k);all.push({id,name:m[1],tier:'',provider:p});}}
+  for(const m of disc){const id=m.id,p=m.provider||'';const k=p+'/'+id;if(!seenKeys.has(k)){seenKeys.add(k);all.push({id,name:m.id,tier:'',provider:p});}}
   const filtered=all.filter(m=>keyedProviders.has(m.provider));
-  // 按等级排序（S+ 在最前，C 在最后）
-  const tierOrder={'S+':0,'S':1,'A+':2,'A':3,'A-':4,'B+':5,'B':6,'C':7,'':9};
+  // 按等级排序（S 在最前，C 在最后）
+  const tierOrder={'S':0,'A':1,'B':2,'C':3,'':9};
   filtered.sort((a,b)=>{
     const ta=mt[gk(a)];
     const tb=mt[gk(b)];
@@ -1543,6 +2014,76 @@ async function importConfig(){
   }
 }
 
+/** detectFormat — 根据文件内容自动检测格式 */
+function detectFormat(filename, content) {
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  if (ext === 'json') return 'json';
+  if (ext === 'csv') return 'csv';
+  if (ext === 'env' || ext === 'txt') {
+    // Check if it looks like JSON
+    const trimmed = content.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) return 'json';
+    // Check if it has CSV header
+    if (trimmed.split('\\n')[0].includes('platform,key')) return 'csv';
+    return 'env';
+  }
+  // No extension — try content-based detection
+  const trimmed = content.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) return 'json';
+  if (trimmed.includes('platform,key')) return 'csv';
+  return 'env';
+}
+
+/** importFreellmapi — 导入 FreeLLMApi 密钥文件 */
+async function importFreellmapi() {
+  const fInput = document.getElementById('fllmFile');
+  const statusEl = document.getElementById('fllmStatus');
+  const resultEl = document.getElementById('fllmResult');
+  if (!fInput.files.length) { t('请选择要导入的文件', 'err'); return; }
+  
+  const file = fInput.files[0];
+  statusEl.textContent = '正在读取文件...';
+  resultEl.style.display = 'none';
+  
+  try {
+    const content = await file.text();
+    const format = detectFormat(file.name, content);
+    
+    statusEl.textContent = '正在导入 (' + format.toUpperCase() + ')...';
+    const r = await api('/import-freellmapi', { method: 'POST', body: { format, content } });
+    
+    if (r.error) {
+      statusEl.textContent = '';
+      resultEl.style.display = 'block';
+      resultEl.innerHTML = '<div style="color:var(--red)">❌ ' + esc(r.error) + '</div>';
+      t(r.error, 'err');
+      return;
+    }
+    
+    statusEl.textContent = '';
+    resultEl.style.display = 'block';
+    let html = '<div style="color:var(--green)">✅ 导入完成！</div>';
+    html += '<div style="margin-top:4px">共 ' + r.total + ' 条，成功导入 <b>' + r.imported + '</b> 条';
+    if (r.duplicates > 0) html += '，跳过重复 <b>' + r.duplicates + '</b> 条';
+    html += '，跳过 ' + r.skipped + ' 条</div>';
+    if (r.errors && r.errors.length > 0) {
+      html += '<div style="margin-top:6px;color:var(--dim);font-size:12px">';
+      r.errors.forEach(e => { html += '<div>⚠ ' + esc(e) + '</div>'; });
+      html += '</div>';
+    }
+    resultEl.innerHTML = html;
+    if (r.imported > 0) {
+      t('成功导入 ' + r.imported + ' 个密钥');
+      setTimeout(() => { if(typeof rP === 'function') rP(); }, 500);
+    }
+  } catch (e) {
+    statusEl.textContent = '';
+    resultEl.style.display = 'block';
+    resultEl.innerHTML = '<div style="color:var(--red)">❌ 读取文件失败: ' + esc(e.message) + '</div>';
+    t('读取文件失败', 'err');
+  }
+}
+
 /**
  * lS — 加载已保存的 SWE-bench URL
  */
@@ -1565,12 +2106,12 @@ async function startAutoTier(){
   document.getElementById('autoTierBar').style.width='0%';
   document.getElementById('autoTierCounts').textContent='准备中';
   const r=await api('/auto-tier',{method:'POST'});
-  if(r.error){t(r.error,'err');btn.disabled=false;btn.textContent='自动定级';return;}
+  if(r.error){t(r.error,'err');btn.disabled=false;btn.textContent='重新定级';return;}
   if(!r.running){
     document.getElementById('autoTierStatus').textContent=r.message||'完成';
     document.getElementById('autoTierBar').style.width='100%';
     document.getElementById('autoTierCounts').textContent='无模型可定级';
-    btn.disabled=false;btn.textContent='自动定级';
+    btn.disabled=false;btn.textContent='重新定级';
     return;
   }
   pollAutoTierProgress();
@@ -1587,7 +2128,7 @@ async function pollAutoTierProgress(){
     _autoTierPollTimer=setTimeout(pollAutoTierProgress,800);
   }else{
     const btn=document.getElementById('autoTierBtn');
-    btn.disabled=false;btn.textContent='自动定级';
+    btn.disabled=false;btn.textContent='重新定级';
     if(r.ok>0){
       t('定级完成: 成功 '+r.ok+' 个');
       // Reload model table to show updated tiers
@@ -1602,6 +2143,8 @@ async function pollAutoTierProgress(){
 let _fullKeyCache = {};
 /** 完整服务器 API Key 缓存（Playground 使用） */
 let _fullServerKey = null;
+/** 缓存的提供商配置（测试模型搜索使用） */
+let _rPConfig = null;
 
 /**
  * _resolveKey — 从缓存中查找完整 API Key
@@ -2083,9 +2626,9 @@ let _autoTierState = { running: false, total: 0, completed: 0, ok: 0, fail: 0, c
 function inferTierFromModelName(modelId) {
   const lowerId = modelId.toLowerCase();
   const namePart = modelId.split('/').pop()?.toLowerCase() || '';
-  // A+ for frontier small/cheap models
-  if (/gpt-4o-mini|gpt-5-nano|claude.*haiku|gemini.*flash|deepseek.*lite|qwen.*turbo|ministral|command-r7b/.test(lowerId)) return 'A+';
-  // S+ tier (frontier large)
+  // A tier for frontier small/cheap models
+  if (/gpt-4o-mini|gpt-5-nano|claude.*haiku|gemini.*flash|deepseek.*lite|qwen.*turbo|ministral|command-r7b/.test(lowerId)) return 'A';
+  // S tier (frontier large)
   if (/claude.*(?:opus|sonnet|4)(?!.*haiku)/.test(lowerId) ||
       /gpt-4(?:o|\.)?(?!.*mini|.*oss)/.test(lowerId) ||
       /gemini.*(?:ultra|2\.(?:0|5)|pro)/.test(lowerId) ||
@@ -2096,22 +2639,22 @@ function inferTierFromModelName(modelId) {
       /nemotron.*super/.test(lowerId) ||
       /gpt-oss-120b/.test(lowerId) ||
       /seed-oss-36b/.test(lowerId)) {
-    if (/mini|tiny|small|nano/.test(namePart)) return 'A+';
+    if (/mini|tiny|small|nano/.test(namePart)) return 'A';
     if (/flash|lite|fast/.test(namePart)) return 'A';
-    return 'S+';
+    return 'S';
   }
-  // S tier (excellent, not frontier)
+  // A tier (excellent, not frontier)
   if (/claude|gpt-4|gemini|deepseek(?!.*lite)|qwen(?!.*4b|.*turbo)|kimi|mistral-large|llama.*(?:70|90|405|maverick|scout)/.test(lowerId) ||
       /nemotron|command.*r[^7]/.test(lowerId) ||
-      /gpt-oss/.test(lowerId)) return 'S';
-  // A tier (solid performers)
+      /gpt-oss/.test(lowerId)) return 'A';
+  // B tier (solid performers)
   if (/llama|mistral|mixtral|qwen|glm|phi-3|command|gemma.*(?:2|27)|cohere|codestral|gpt-oss-20b/.test(lowerId)) {
-    if (/mini|tiny|small|nano/.test(namePart)) return 'B+';
+    if (/mini|tiny|small|nano/.test(namePart)) return 'B';
     if (/flash|lite|fast/.test(namePart)) return 'A';
     return 'A';
   }
-  // B+ tier
-  if (/gemma|phi|granite|falcon|dbrx|solar|aya|reka|hermes|dolphin|wizard|mythomax/.test(lowerId)) return 'B+';
+  // C tier (smaller/older models)
+  if (/gemma|phi|granite|falcon|dbrx|solar|aya|reka|hermes|dolphin|wizard|mythomax/.test(lowerId)) return 'B';
   return 'B'; // 默认 B
 }
 
@@ -2124,12 +2667,20 @@ async function handleAutoTier(req, res) {
   const toGrade = [];
   const modelLocks = getAllModelLocks();
 
-  // Collect ALL models (both static and discovered) — skip locked ones
+  // Only tier models from providers that have API keys configured
+  const config = loadConfig();
+  const keyedProviders = new Set();
+  for (const [k, v] of Object.entries(config.apiKeys || {})) {
+    if (Array.isArray(v) && v.length > 0) keyedProviders.add(k);
+  }
+
+  // Collect models from providers with API keys — skip locked ones
   for (const m of MODELS) {
     const provider = m[5];
     const modelId = m[0];
     if (!provider || !sources[provider]?.url) continue;
     if (!modelId) continue;
+    if (!keyedProviders.has(provider)) continue; // Skip providers without keys
     const key = provider + '/' + modelId;
     if (modelLocks[key]) continue; // Skip locked
     toGrade.push({ modelId, provider, label: m[1] || modelId });
@@ -2141,6 +2692,7 @@ async function handleAutoTier(req, res) {
       const modelId = dm.id || dm.model_id || '';
       const prov = dm.provider || '';
       if (!modelId || !prov) continue;
+      if (!keyedProviders.has(prov)) continue; // Skip providers without keys
       if (modelLocks[prov + '/' + modelId]) continue;
       if (!toGrade.find(m => m.modelId === modelId && m.provider === prov)) {
         toGrade.push({ modelId, provider: prov, label: modelId });
@@ -2342,6 +2894,219 @@ async function handleUpdateConfig(req, res) {
   }
 
   jsonResponse(res, 400, { error: 'Unknown action' });
+}
+
+// ============================================================================
+// FreeLLMApi 导入功能
+// ============================================================================
+
+/** freellmapi 平台名 → 当前项目 provider key 映射 */
+const FREELLMAPI_PLATFORM_MAP = {
+  nvidia: 'nvidia',
+  groq: 'groq',
+  cerebras: 'cerebras',
+  cloudflare: 'cloudflare',
+  cohere: 'cohere',
+  github: 'github',
+  huggingface: 'huggingface',
+  modelscope: 'modelscope',
+  openrouter: 'openrouter',
+  siliconflow: 'siliconflow',
+  mistral: 'codestral',
+  zhipu: 'zai',
+  opencode: 'opencode-zen',
+  ollama: 'ollama-cloud',
+  aion: 'aion-labs',
+  agnes: 'agnes-ai',
+  deepseek: 'deepseek',
+  sambanova: 'sambanova',
+  chutes: 'chutes',
+  xai: 'xai',
+  nebius: 'nebius',
+  nscale: 'nscale',
+  glhf: 'glhf',
+  qwen: 'qwen',
+  ai21: 'ai21',
+  anyapi: 'openrouter',
+  bazaarlink: 'openrouter',
+  routeway: 'openrouter',
+  requesty: 'openrouter',
+  reka: 'googleai',
+  llm7: 'llm7',
+  bai: 'openrouter',
+  longcat: 'siliconflow',
+  nara: 'openrouter',
+  navy: 'openrouter',
+  orcarouter: 'openrouter',
+  unorouter: 'openrouter',
+  xkiro: 'openrouter',
+};
+
+/**
+ * Parse freellmapi JSON format
+ * @param {string} content - JSON string
+ * @returns {Array<{platform,key,label,baseUrl?}>}
+ */
+function parseFreellmapiJson(content) {
+  const data = JSON.parse(content);
+  if (!data.keys || !Array.isArray(data.keys)) {
+    throw new Error('JSON 格式无效：缺少 keys 数组');
+  }
+  return data.keys;
+}
+
+/**
+ * Parse freellmapi CSV format
+ * @param {string} content - CSV string
+ * @returns {Array<{platform,key,label,baseUrl?}>}
+ */
+function parseFreellmapiCsv(content) {
+  const lines = content.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) throw new Error('CSV 文件为空或只有表头');
+  // Skip header line
+  const results = [];
+  for (let i = 1; i < lines.length; i++) {
+    const parts = lines[i].match(/(".*?"|[^,]+)/g);
+    if (!parts || parts.length < 3) continue;
+    const platform = parts[0].replace(/^"|"$/g, '').trim();
+    const key = parts[1].replace(/^"|"$/g, '').trim();
+    const label = parts[2].replace(/^"|"$/g, '').trim();
+    const baseUrl = parts[3] ? parts[3].replace(/^"|"$/g, '').trim() : '';
+    if (platform && key) {
+      results.push({ platform, key, label, baseUrl });
+    }
+  }
+  return results;
+}
+
+/**
+ * Parse freellmapi ENV format
+ * @param {string} content - ENV string
+ * @returns {Array<{platform,key,label,baseUrl?}>}
+ */
+function parseFreellmapiEnv(content) {
+  const lines = content.split(/\r?\n/);
+  const results = [];
+  let currentLabel = '';
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      if (trimmed.startsWith('#')) currentLabel = trimmed.slice(1).trim();
+      continue;
+    }
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) continue;
+    const varName = trimmed.slice(0, eqIdx).trim();
+    const value = trimmed.slice(eqIdx + 1).trim();
+    // Extract platform from var name: AGNES_KEY -> agnes, AGNES_KEY_2 -> agnes
+    const platformMatch = varName.match(/^(\w+?)(?:_\d+)?$/);
+    if (!platformMatch) continue;
+    const platform = platformMatch[1].toLowerCase().replace(/_key$/, '');
+    if (platform === 'key' || !value) continue;
+    results.push({ platform, key: value, label: currentLabel || '', baseUrl: '' });
+    currentLabel = '';
+  }
+  return results;
+}
+
+/**
+ * Import keys from freellmapi format
+ * POST /api/admin/import-freellmapi
+ * Body: { format: 'json'|'csv'|'env', content: string }
+ */
+async function handleImportFreellmapi(req, res) {
+  const body = await readJsonBody(req);
+  const { format, content } = body;
+  if (!content) return jsonResponse(res, 400, { error: '缺少导入内容' });
+
+  let keys;
+  try {
+    if (format === 'json') {
+      keys = parseFreellmapiJson(content);
+    } else if (format === 'csv') {
+      keys = parseFreellmapiCsv(content);
+    } else if (format === 'env') {
+      keys = parseFreellmapiEnv(content);
+    } else {
+      return jsonResponse(res, 400, { error: '不支持的格式，请使用 json、csv 或 env' });
+    }
+  } catch (e) {
+    return jsonResponse(res, 400, { error: '解析失败：' + e.message });
+  }
+
+  if (!keys.length) return jsonResponse(res, 400, { error: '未找到任何有效的 Key' });
+
+  const config = loadConfig();
+  const { getCustomProviders, saveCustomProvider, setCustomProviderEnabled, getAllApiKeys } = require('./db');
+  let imported = 0, skipped = 0, duplicates = 0, errors = [];
+  const seen = new Set();
+
+  // Build set of existing keys for deduplication
+  const existingKeys = new Set();
+  const allProviderKeys = config.apiKeys || {};
+  for (const [prov, keysArr] of Object.entries(allProviderKeys)) {
+    if (Array.isArray(keysArr)) {
+      for (const k of keysArr) {
+        existingKeys.add(prov + '|' + (typeof k === 'string' ? k : k.key || ''));
+      }
+    }
+  }
+
+  for (const k of keys) {
+    const platform = (k.platform || '').toLowerCase();
+    const key = (k.key || '').trim();
+    const label = k.label || '';
+    const baseUrl = k.baseUrl || '';
+
+    if (!key || key === '******') { skipped++; continue; }
+
+    // Deduplicate: same platform + same key
+    const dedupeKey = platform + '|' + key;
+    if (seen.has(dedupeKey)) { skipped++; continue; }
+    seen.add(dedupeKey);
+
+    // Map platform name
+    const mappedPlatform = FREELLMAPI_PLATFORM_MAP[platform];
+
+    // Check if key already exists
+    if (mappedPlatform && existingKeys.has(mappedPlatform + '|' + key)) {
+      duplicates++;
+      continue;
+    }
+
+    if (mappedPlatform) {
+      // Known provider — add via addApiKey
+      try {
+        addApiKey(config, mappedPlatform, key, label || ('imported from freellmapi'));
+        imported++;
+      } catch (e) {
+        errors.push(platform + ': ' + e.message);
+      }
+    } else if (baseUrl) {
+      // Custom provider with baseUrl — save as custom provider
+      try {
+        const cpName = 'freellmapi_' + platform;
+        saveCustomProvider(cpName, baseUrl, key, label || ('imported from freellmapi'));
+        setCustomProviderEnabled(cpName, true);
+        imported++;
+      } catch (e) {
+        errors.push(platform + ': ' + e.message);
+      }
+    } else {
+      skipped++;
+      errors.push(platform + ': 未映射的提供商且无 baseUrl，已跳过');
+    }
+  }
+
+  saveConfig(config);
+  jsonResponse(res, 200, {
+    success: true,
+    total: keys.length,
+    imported,
+    skipped,
+    duplicates,
+    errors: errors.slice(0, 20), // Limit error list
+  });
 }
 
 async function handleAddProviderKey(req, res) {
@@ -2858,6 +3623,96 @@ async function handleImportConfig(req, res) {
   }
 }
 
+// ── Monitoring Handlers ──
+
+function handleGetCircuitBreaker(res) {
+  const circuitBreaker = require('./circuit-breaker');
+  const summary = circuitBreaker.getSummary();
+  const allStates = circuitBreaker.getAllStates();
+  const allModelStates = circuitBreaker.getAllModelStates();
+  
+  // Flatten provider states into array for frontend consumption
+  const providers = Object.entries(allStates).map(([key, st]) => ({
+    key,
+    state: st.state,
+    failures: st.failures || 0,
+    successes: (st.stats && st.stats.successfulRequests) || 0,
+    totalRequests: (st.stats && st.stats.totalRequests) || 0,
+    lastFailure: st.lastFailure || 0,
+    lastSuccess: (st.stats && st.stats.lastSuccess) || 0,
+  }));
+  
+  // Flatten model states into array for frontend consumption
+  const models = Object.entries(allModelStates).map(([key, st]) => ({
+    key,
+    providerKey: st.providerKey,
+    modelName: st.modelName,
+    state: st.state,
+    failures: st.failures || 0,
+    successes: (st.stats && st.stats.successfulRequests) || 0,
+    totalRequests: (st.stats && st.stats.totalRequests) || 0,
+    lastFailure: st.lastFailure || 0,
+    lastSuccess: (st.stats && st.stats.lastSuccess) || 0,
+  }));
+  
+  // Flatten summary for frontend
+  jsonResponse(res, 200, {
+    summary: {
+      totalStates: (summary.providers.open || 0) + (summary.providers.halfOpen || 0) + (summary.providers.closed || 0),
+      open: summary.providers.open || 0,
+      halfOpen: summary.providers.halfOpen || 0,
+      closed: summary.providers.closed || 0,
+      totalRequests: summary.requests.total || 0,
+      totalFailures: summary.requests.failed || 0,
+      successRate: summary.requests.successRate || '0%',
+      config: summary.config,
+      models: summary.models || {},
+    },
+    providers,
+    models,
+  });
+}
+
+async function handleResetCircuitBreaker(req, res) {
+  const circuitBreaker = require('./circuit-breaker');
+  const body = await readJsonBody(req);
+  const provider = body.provider;
+  const model = body.model;
+  
+  if (provider && model) {
+    // Reset specific model
+    circuitBreaker.resetModel(provider, model);
+  } else if (provider) {
+    // Reset entire provider (including all its models)
+    circuitBreaker.reset(provider);
+  } else {
+    // Reset everything
+    circuitBreaker.resetAll();
+  }
+  jsonResponse(res, 200, { success: true });
+}
+
+function handleGetLoadBalancer(res) {
+  const loadBalancer = require('./load-balancer');
+  const stats = loadBalancer.getStats();
+  jsonResponse(res, 200, {
+    stats: stats.providers || {},
+    strategy: stats.strategy || 'round-robin',
+  });
+}
+
+function handleGetRateLimiter(res) {
+  const rateLimiter = require('./rate-limiter');
+  jsonResponse(res, 200, {
+    summary: rateLimiter.getSummary(),
+  });
+}
+
+function handleGetMetrics(res) {
+  const metrics = require('./metrics');
+  jsonResponse(res, 200, metrics.getJsonMetrics());
+}
+
 /**
  * handleAdminRequest — 管理面板请求路由分发器
  * 使用路由表模式替代 if-else 链，将路径-方法-处理三元组集中定义
@@ -3017,6 +3872,13 @@ async function handleAdminRequest(parsedUrl, req, res) {
         { method: 'GET',   path: '/auto-tier/status',   handler: () => handleAutoTierStatus(res) },
         { method: 'POST',  path: '/export',             handler: () => handleExportConfig(req, res) },
         { method: 'POST',  path: '/import',             handler: () => handleImportConfig(req, res) },
+        { method: 'POST',  path: '/import-freellmapi',  handler: () => handleImportFreellmapi(req, res) },
+        // New monitoring endpoints
+        { method: 'GET',   path: '/circuit-breaker',    handler: () => handleGetCircuitBreaker(res) },
+        { method: 'POST',  path: '/circuit-breaker/reset', handler: () => handleResetCircuitBreaker(req, res) },
+        { method: 'GET',   path: '/load-balancer',      handler: () => handleGetLoadBalancer(res) },
+        { method: 'GET',   path: '/rate-limiter',       handler: () => handleGetRateLimiter(res) },
+        { method: 'GET',   path: '/metrics',            handler: () => handleGetMetrics(res) },
       ];
 
       // 精确路径匹配

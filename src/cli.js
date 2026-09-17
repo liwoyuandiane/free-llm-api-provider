@@ -296,7 +296,7 @@ function generateLitellmConfig() {
     if (!provider || !provider.url) continue;
     
     const models = getModelsByProvider(providerKey);
-    const tiers = ['S+', 'S', 'A+', 'A', 'A-', 'B+', 'B'];
+    const tiers = ['S', 'A', 'B'];
     
     for (const tier of tiers) {
       const tierModels = models.filter(m => m[2] === tier);
@@ -306,7 +306,7 @@ function generateLitellmConfig() {
       const [modelId] = tierModels[0];
       
       modelList.push({
-        model_name: `tier-${tier.toLowerCase().replace('+', 'plus')}`,
+        model_name: `auto-${tier.toLowerCase()}`,
         litellm_params: {
           model: `${providerKey}/${modelId}`,
           api_key: `os.environ/${ENV_VAR_NAMES[providerKey] || providerKey.toUpperCase() + '_API_KEY'}`,
@@ -341,12 +341,12 @@ function generateLitellmConfig() {
 }
 
 function buildFallbackDict(enabledProviders) {
-  // Build fallback chain: S+ -> S -> A+ -> A -> A- -> B+ -> B
+  // Build fallback chain: auto-s -> auto-a -> auto-b -> auto-c
   const fallbacks = {};
-  const tiers = ['splus', 's', 'aplus', 'a', 'aminus', 'bplus', 'b'];
+  const tiers = ['s', 'a', 'b'];
   
   for (let i = 0; i < tiers.length - 1; i++) {
-    fallbacks[`tier-${tiers[i]}`] = [`tier-${tiers[i+1]}`];
+    fallbacks[`auto-${tiers[i]}`] = [`auto-${tiers[i+1]}`];
   }
   
   return fallbacks;
@@ -641,32 +641,20 @@ async function addOpencodeConfig() {
       apiKey: getKey(),
     },
     models: {
-      "tier-splus": {
-        name: "S+ Tier (Elite)",
+      "auto-s": {
+        name: "S Tier (Elite)",
         limit: { context: 256000, output: 8192 }
       },
-      "tier-s": {
-        name: "S Tier (Excellent)",
-        limit: { context: 256000, output: 8192 }
-      },
-      "tier-aplus": {
-        name: "A+ Tier (Very Capable)",
+      "auto-a": {
+        name: "A Tier (Capable)",
         limit: { context: 131000, output: 8192 }
       },
-      "tier-a": {
-        name: "A Tier (Solid)",
-        limit: { context: 128000, output: 8192 }
-      },
-      "tier-aminus": {
-        name: "A- Tier (Decent)",
-        limit: { context: 128000, output: 4096 }
-      },
-      "tier-bplus": {
-        name: "B+ Tier (Capable)",
+      "auto-b": {
+        name: "B Tier (Solid)",
         limit: { context: 64000, output: 4096 }
       },
-      "tier-b": {
-        name: "B Tier (Entry)",
+      "auto-c": {
+        name: "C Tier (Entry)",
         limit: { context: 32000, output: 4096 }
       },
       "tier-c": {
@@ -686,7 +674,7 @@ async function addOpencodeConfig() {
   console.log('  1. Restart OpenCode completely');
   console.log('  2. Run /connect');
   console.log('  3. Select "flap" provider');
-  console.log('  4. Choose your tier (e.g., tier-b)');
+  console.log('  4. Choose your tier (e.g., auto-b)');
   console.log('');
   console.log('Note: Existing providers in config are preserved.');
 }

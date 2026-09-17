@@ -150,7 +150,7 @@ function getModelLimits(modelId) {
   return { context, output: Math.min(context, 16384) };
 }
 
-const TIER_ORDER = ['S+', 'S', 'A+', 'A', 'A-', 'B+', 'B', 'C', 'error'];
+const TIER_ORDER = ['S', 'A', 'B', 'C', 'error'];
 
 module.exports = {
   sources, MODELS, ENV_VAR_NAMES, TIER_ORDER,
