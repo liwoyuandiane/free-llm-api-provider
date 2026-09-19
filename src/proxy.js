@@ -474,6 +474,8 @@ function getPrioritizedProviders(config, opts = {}) {
           }
         })(),
         anthropicFormat: !!provider?.anthropicFormat,
+        keepModelPrefix: !!provider?.keepModelPrefix,
+        noSystemRole: !!provider?.noSystemRole,
       });
     }
   }
@@ -706,16 +708,16 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
 
   // Determine which models to try (multi-model failover within provider)
   let modelsToTry = [provider.models[0]]; // default: first model
-  if (requestBody.model && requestBody.model.startsWith('tier-')) {
-    // For tier requests, filter models by the requested tier level
-    const requestedTier = TIER_ALIAS_MAP[requestBody.model];
-    if (requestedTier && provider.modelTiers) {
-      modelsToTry = provider.models.filter(mid => provider.modelTiers[mid] === requestedTier);
+  const modelTierLevel = TIER_ALIAS_MAP[requestBody.model];
+  if (modelTierLevel) {
+    // For tier requests (tier-* or auto-*), filter models by the requested tier level
+    if (provider.modelTiers) {
+      modelsToTry = provider.models.filter(mid => provider.modelTiers[mid] === modelTierLevel);
     } else {
       modelsToTry = provider.models;
     }
     if (modelsToTry.length === 0) {
-      throw { status: 404, error: `No ${requestedTier || requestBody.model} models available for ${provider.key}`, provider: provider.key };
+      throw { status: 404, error: `No ${modelTierLevel} tier models available for ${provider.key}`, provider: provider.key };
     }
   } else if (requestBody.model === 'auto' || !requestBody.model) {
     modelsToTry = provider.models;
@@ -736,12 +738,13 @@ async function forwardToProvider(provider, requestBody, onChunk = null) {
   }
 
   /**
-   * model=auto 或 tier-* 模式：使用当前尝试的模型
+   * model=auto 或 tier-* 或 auto-* 模式：使用当前尝试的模型
    * 否则，去除 provider/ 前缀得到实际模型名
+   * keepModelPrefix=true 的提供商（如 NVIDIA NIM）模型名包含组织前缀，不去除
    */
-  if (body.model === 'auto' || !body.model || body.model.startsWith('tier-')) {
+  if (body.model === 'auto' || !body.model || TIER_ALIAS_MAP[body.model]) {
     body.model = selectedModelId;
-  } else if (body.model.startsWith(provider.key + '/')) {
+  } else if (!provider.keepModelPrefix && body.model.startsWith(provider.key + '/')) {
     body.model = body.model.slice(provider.key.length + 1);
   }
 
@@ -1643,7 +1646,7 @@ function createServer() {
           };
           if (reqBody.encoding_format) forwardBody.encoding_format = reqBody.encoding_format;
 
-          const resp = await fetch(embedUrl, {
+          const resp = await proxyFetch(embedUrl, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -1653,7 +1656,14 @@ function createServer() {
             signal: AbortSignal.timeout(30000),
           });
 
-          const data = await resp.json();
+          const respText = await resp.text();
+          let data;
+          try {
+            data = JSON.parse(respText);
+          } catch {
+            jsonError(res, resp.status || 502, respText.substring(0, 500) || 'Embeddings provider returned non-JSON response');
+            return;
+          }
           // Fix model name in response to include provider prefix
           if (data.model && providerKey && !data.model.startsWith(providerKey + '/')) {
             data.model = providerKey + '/' + data.model;

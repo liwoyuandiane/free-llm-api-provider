@@ -950,6 +950,31 @@ function saveDiscoveredModels(provider, models) {
       insert.run(provider, m.id, m.owned_by || '');
       enable.run(m.id, provider);
     }
+    // 清理不再存在的旧模型（防止过时数据导致404）
+    const newModelIds = new Set(models.map(m => m.id));
+    const existing = db.prepare('SELECT model_id FROM discovered_models WHERE provider = ?').all(provider);
+    const stale = existing.filter(r => !newModelIds.has(r.model_id));
+    if (stale.length > 0) {
+      const deleteModel = db.prepare('DELETE FROM discovered_models WHERE provider = ? AND model_id = ?');
+      const deleteState = db.prepare('DELETE FROM model_states WHERE provider = ? AND model_id = ?');
+      for (const r of stale) {
+        deleteModel.run(provider, r.model_id);
+        deleteState.run(provider, r.model_id);
+      }
+      console.log(`[DB] 清理 ${provider} 过时模型: ${stale.length} 个`);
+    }
+    // 清理 sync_models 中不再存在的旧模型（防止过时 SWE-bench 数据导致410/404）
+    try {
+      const staleSync = db.prepare("SELECT model_id FROM sync_models WHERE provider = ?").all(provider);
+      const staleSyncIds = staleSync.filter(r => !newModelIds.has(r.model_id));
+      if (staleSyncIds.length > 0) {
+        const deleteSync = db.prepare("DELETE FROM sync_models WHERE provider = ? AND model_id = ?");
+        for (const r of staleSyncIds) {
+          deleteSync.run(provider, r.model_id);
+        }
+        console.log(`[DB] 清理 ${provider} 过时 sync_models: ${staleSyncIds.length} 个`);
+      }
+    } catch {}
     commit.run();
   } catch (err) {
     console.warn('[DB] saveDiscoveredModels 事务失败:', err.message);
@@ -1143,8 +1168,22 @@ function applyTiersToDiscoveredModels() {
       }
     } catch {}
 
-    // Also check swe-bench.json entries stored in sync_models
-    // These use format: provider/model_id
+    // 构建已发现模型的集合，用于清理过时的 tier 数据
+    const discoveredSet = new Set(discovered.map(dm => dm.provider + '/' + dm.model_id));
+
+    // 清理 model_tiers 中不再存在于 discovered_models 的记录
+    try {
+      const staleTiers = db.prepare("SELECT provider, model_id FROM model_tiers WHERE provider IN (SELECT DISTINCT provider FROM discovered_models)").all();
+      const deleteTier = db.prepare("DELETE FROM model_tiers WHERE provider = ? AND model_id = ?");
+      let staleCount = 0;
+      for (const t of staleTiers) {
+        if (!discoveredSet.has(t.provider + '/' + t.model_id)) {
+          deleteTier.run(t.provider, t.model_id);
+          staleCount++;
+        }
+      }
+      if (staleCount > 0) console.log(`[DB] 清理过时 tier 数据: ${staleCount} 个`);
+    } catch {}
 
     let count = 0;
     for (const dm of discovered) {

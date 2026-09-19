@@ -260,7 +260,7 @@ class CircuitBreaker {
     // Model-level success (if model provided)
     if (modelName) {
       const modelKey = `${providerKey}:${modelName}`;
-      constModelState = this.modelStates.get(modelKey);
+      const modelState = this.modelStates.get(modelKey);
       const modelStats = this.getModelStats(providerKey, modelName);
       
       modelStats.totalRequests++;

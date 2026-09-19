@@ -20,7 +20,7 @@ const glhfModels = [['meta-llama/Meta-Llama-3.1-70B-Instruct', 'Llama 3.1 70B', 
 const nscaleModels = [['llama-3-3-70b-instruct', 'Llama 3.3 70B', '128k']];
 const nebiusModels = [['qwen3-235b-a22b', 'Qwen3 235B A22B', '128k']];
 const xaiModels = [['grok-4-3', 'Grok 4.3', '1M']];
-const nvidiaNim = [['z-ai/glm-5.1', 'Z AI GLM 5.1', '202k']];
+const nvidiaNim = [['openai/gpt-oss-20b', 'GPT-OSS 20B', '128k'], ['nvidia/nemotron-3-super-120b-a12b', 'Nemotron 3 Super 120B', '128k'], ['nvidia/nemotron-3.5-lightning-30b-a3b', 'Nemotron 3.5 Lightning 30B', '128k']];
 const groq = [['moonshotai/kimi-k2-instruct', 'Kimi K2 Instruct', '131k']];
 const cerebras = [['llama3.1-70b', 'Llama 3.1 70B', '131k']];
 const cloudflare = [['@cf/mistral/mistral-7b-instruct-v0.1', 'Mistral 7B', '32k']];
@@ -35,7 +35,7 @@ const chutes = [['deepseek-ai/DeepSeek-R1', 'DeepSeek R1', '131k']];
 const qwen = [['qwen3-max', 'Qwen3 Max', '128k']];
 
 const sources = {
-  nvidia: { name: 'NVIDIA NIM', url: 'https://integrate.api.nvidia.com/v1/chat/completions', models: nvidiaNim },
+  nvidia: { name: 'NVIDIA NIM', url: 'https://integrate.api.nvidia.com/v1/chat/completions', models: nvidiaNim, keepModelPrefix: true },
   groq: { name: 'Groq', url: 'https://api.groq.com/openai/v1/chat/completions', models: groq },
   cerebras: { name: 'Cerebras', url: 'https://api.cerebras.ai/v1/chat/completions', models: cerebras },
   googleai: { name: 'Google Gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', models: googleai },
