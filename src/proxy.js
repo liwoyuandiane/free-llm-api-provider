@@ -1639,9 +1639,8 @@ function createServer() {
           } else {
             embedUrl = embedUrl.replace(/\/+$/, '') + '/embeddings';
           }
-
           const forwardBody = {
-            model: parts.length > 1 ? parts.slice(1).join('/') : modelId,
+            model: (chosenProvider.keepModelPrefix || parts.length <= 1) ? modelId : (parts.length > 1 ? parts.slice(1).join('/') : modelId),
             input: input,
           };
           if (reqBody.encoding_format) forwardBody.encoding_format = reqBody.encoding_format;
