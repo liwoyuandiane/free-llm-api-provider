@@ -71,3 +71,6 @@ backups/
 # Test startup script
 start.sh
 .data/backups/
+
+# FreeLLMApi imported keys (contains API keys)
+freellmapi/
